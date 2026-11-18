@@ -1,0 +1,6 @@
+{
+  "name": "APEX STRIDER 3D",
+  "description": "A 3D kinetic obstacle racer and character-controller playground featuring swept environmental collisions, slopes, moving platforms, boost pads, and procedural WebGL visuals.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
