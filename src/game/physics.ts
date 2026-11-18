@@ -104,6 +104,7 @@ export class CharacterController {
     ramps: RampCollider[],
     movingPlatforms: MovingPlatformState[],
     crates: PushCrate[],
+    surfaceFrictionFactor = 1.0,
   ): PhysicsStepEvents {
     const events: PhysicsStepEvents = {
       jumped: false,
@@ -142,15 +143,18 @@ export class CharacterController {
       .addScaledVector(_camRight, input.moveX)
       .addScaledVector(_camForward, input.moveZ);
     const wishMag = _wishDir.length();
+    const traction = THREE.MathUtils.clamp(surfaceFrictionFactor, 0.55, 1.0);
+    const steerRate = 8.0 + 5.0 * traction;
+
     if (wishMag > 0.001) {
       _wishDir.divideScalar(Math.max(1, wishMag));
-      // Smoothly rotate car toward movement direction
+      // Smoothly rotate car toward movement direction (subtly looser bite on wet/damp surfaces)
       const targetYaw = Math.atan2(_wishDir.x, _wishDir.z);
       let diff = targetYaw - this.yaw;
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
       this.steerDelta = THREE.MathUtils.clamp(diff, -1, 1);
-      this.yaw += diff * (1 - Math.exp(-13 * dt));
+      this.yaw += diff * (1 - Math.exp(-steerRate * dt));
     } else {
       this.steerDelta = 0;
     }
@@ -181,9 +185,12 @@ export class CharacterController {
       const horizSpeed = Math.hypot(this.velocity.x, this.velocity.z);
 
       if (this.grounded) {
-        // Apply friction when slowing down or turning sharply
+        const effectiveFriction = this.groundFriction * traction;
+        const effectiveAccel = this.groundAccel * (0.55 + 0.45 * traction);
+
+        // Apply surface friction when slowing down or turning sharply
         if (horizSpeed > 0.01) {
-          const drop = horizSpeed * this.groundFriction * dt;
+          const drop = horizSpeed * effectiveFriction * dt;
           const newSpeed = Math.max(0, horizSpeed - drop);
           const ratio = newSpeed / horizSpeed;
           this.velocity.x *= ratio;
@@ -193,7 +200,7 @@ export class CharacterController {
         if (wishMag > 0.05) {
           const desiredX = _wishDir.x * targetSpeed;
           const desiredZ = _wishDir.z * targetSpeed;
-          const accelStep = this.groundAccel * dt;
+          const accelStep = effectiveAccel * dt;
           const dx = desiredX - this.velocity.x;
           const dz = desiredZ - this.velocity.z;
           const dLen = Math.hypot(dx, dz);

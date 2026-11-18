@@ -2,6 +2,8 @@ import * as THREE from 'three';
 
 export type GamePhase = 'title' | 'playing' | 'paused' | 'victory' | 'gameover';
 
+export type WeatherType = 'clear' | 'rain' | 'fog';
+
 export interface MinimapTrackRect {
   minX: number;
   maxX: number;
@@ -67,6 +69,7 @@ export interface HudSnapshot {
   comboEventLabel: string;
   bestCombo: number;
   sectorName: string;
+  weather: WeatherType;
   muted: boolean;
   cameraMode: 'chase' | 'dynamic';
   ghostAvailable: boolean;

@@ -5,6 +5,8 @@
 export class GameAudio {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private rainGain: GainNode | null = null;
+  private rainSource: AudioBufferSourceNode | null = null;
   private muted = false;
   private stepTimer = 0;
 
@@ -16,6 +18,9 @@ export class GameAudio {
     this.muted = mute;
     if (this.masterGain && this.ctx) {
       this.masterGain.gain.setTargetAtTime(mute ? 0 : 0.38, this.ctx.currentTime, 0.02);
+    }
+    if (mute && this.rainGain && this.ctx) {
+      this.rainGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.04);
     }
   }
 
@@ -282,5 +287,65 @@ export class GameAudio {
       osc.start(t);
       osc.stop(t + 0.46);
     });
+  }
+
+  public updateWeatherAudio(rainWeight: number, active: boolean): void {
+    if (!this.ctx || !this.masterGain) return;
+    if (!this.rainSource && rainWeight > 0.02 && active && !this.muted) {
+      const bufferSize = Math.floor(this.ctx.sampleRate * 2);
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      let lastOut = 0;
+      for (let i = 0; i < bufferSize; i++) {
+        const white = Math.random() * 2 - 1;
+        lastOut = (lastOut + 0.04 * white) / 1.04;
+        data[i] = lastOut * 2.5 + white * 0.14;
+      }
+      const source = this.ctx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 1150;
+      filter.Q.value = 0.6;
+
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0;
+
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.masterGain);
+      source.start();
+
+      this.rainSource = source;
+      this.rainGain = gain;
+    }
+
+    if (this.rainGain) {
+      const target = active && !this.muted ? Math.max(0, rainWeight) * 0.09 : 0;
+      this.rainGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.12);
+    }
+  }
+
+  public dispose(): void {
+    if (this.rainSource) {
+      try {
+        this.rainSource.stop();
+      } catch {
+        // Ignore already stopped source
+      }
+      this.rainSource.disconnect();
+      this.rainSource = null;
+    }
+    if (this.rainGain) {
+      this.rainGain.disconnect();
+      this.rainGain = null;
+    }
+    if (this.ctx) {
+      void this.ctx.close();
+      this.ctx = null;
+      this.masterGain = null;
+    }
   }
 }

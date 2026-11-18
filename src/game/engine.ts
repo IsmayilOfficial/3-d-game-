@@ -6,6 +6,7 @@ import { createGhostCarModel, createPlayerModel, GhostRig, PlayerRig } from './m
 import { CharacterController, CharacterInput, groundHeightAt } from './physics';
 import { createProceduralTextures, ProceduralTextureSet } from './textures';
 import { BestLapGhostData, GamePhase, GhostFrame, HudSnapshot, MinimapTrackRect } from './types';
+import { WeatherSystem } from './weather';
 
 // Pre-allocated math helpers (zero GC in render loop)
 const _vec3A = new THREE.Vector3();
@@ -34,9 +35,12 @@ export class StriderGameEngine {
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private sunLight: THREE.DirectionalLight;
+  private hemiLight: THREE.HemisphereLight;
+  private rimLight: THREE.DirectionalLight;
   private envTex: THREE.Texture;
   private textures: ProceduralTextureSet;
   private level: BuiltLevel;
+  private weather: WeatherSystem;
   private playerRig: PlayerRig;
   private ghostRig: GhostRig;
   private controller: CharacterController;
@@ -182,8 +186,8 @@ export class StriderGameEngine {
     pmrem.dispose();
 
     // 6. Warm/Cool 3-Point Lighting Rig
-    const hemi = new THREE.HemisphereLight(0x93d5ff, 0xc27b4a, 0.85);
-    this.scene.add(hemi);
+    this.hemiLight = new THREE.HemisphereLight(0x93d5ff, 0xc27b4a, 0.85);
+    this.scene.add(this.hemiLight);
 
     this.sunLight = new THREE.DirectionalLight(0xfff1d6, 2.25);
     this.sunLight.position.set(28, 42, 24);
@@ -202,15 +206,23 @@ export class StriderGameEngine {
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
-    const rimLight = new THREE.DirectionalLight(0x7dd3fc, 0.65);
-    rimLight.position.set(-25, 18, -35);
-    this.scene.add(rimLight);
+    this.rimLight = new THREE.DirectionalLight(0x7dd3fc, 0.65);
+    this.rimLight.position.set(-25, 18, -35);
+    this.scene.add(this.rimLight);
 
-    // 7. Textures, Level, Player & Pooled Particles
+    // 7. Textures, Level, Weather, Player & Pooled Particles
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
     this.textures = createProceduralTextures(maxAniso);
     this.level = buildLevel(this.textures);
     this.scene.add(this.level.group);
+
+    this.weather = new WeatherSystem({
+      scene: this.scene,
+      sunLight: this.sunLight,
+      hemiLight: this.hemiLight,
+      rimLight: this.rimLight,
+      trackMaterial: this.level.trackMaterial,
+    });
 
     this.staticTrackRects = [
       ...this.level.staticColliders
@@ -470,6 +482,7 @@ export class StriderGameEngine {
     this.controller.reset(new THREE.Vector3(0, 0.25, 12), Math.PI);
     this.playerRig.root.position.copy(this.controller.position);
     this.playerRig.root.rotation.y = this.controller.yaw;
+    this.weather.reset();
     this.resetLapGhostState();
 
     // Reset checkpoints
@@ -1189,10 +1202,10 @@ export class StriderGameEngine {
     // Invulnerability hit flash on headlights & taillights
     if (this.invulnTimer > 0) {
       const flash = Math.sin(performance.now() * 0.045) > 0;
-      this.playerRig.headlightMat.emissive.setHex(flash ? 0xef4444 : 0x38bdf8);
+      this.playerRig.headlightMat.emissive.setHex(flash ? 0xef4444 : 0xf8fafc);
       this.playerRig.taillightMat.emissiveIntensity = flash ? 3.2 : 0.8;
     } else {
-      this.playerRig.headlightMat.emissive.setHex(0x38bdf8);
+      this.playerRig.headlightMat.emissive.setHex(0xf8fafc);
       this.playerRig.taillightMat.emissiveIntensity = 1.6;
     }
 
@@ -1335,6 +1348,7 @@ export class StriderGameEngine {
       comboEventLabel: this.comboEventLabel,
       bestCombo: this.bestCombo,
       sectorName: this.currentSector,
+      weather: this.weather.getWeather(),
       muted: this.audio.isMuted(),
       cameraMode: this.cameraMode,
       ghostAvailable: this.bestLapGhost !== null,
@@ -1415,6 +1429,8 @@ export class StriderGameEngine {
         this.jumpJustPressed = false;
         this.dashJustPressed = false;
 
+        const weatherChanged = this.weather.update(dt, this.controller.position, true);
+
         const events = this.controller.step(
           dt,
           input,
@@ -1423,6 +1439,7 @@ export class StriderGameEngine {
           this.level.ramps,
           this.level.movingPlatforms,
           this.level.crates,
+          this.weather.getTractionFactor(),
         );
 
         const horizSpeed = Math.hypot(this.controller.velocity.x, this.controller.velocity.z);
@@ -1465,7 +1482,18 @@ export class StriderGameEngine {
           this.spawnBurst(_vec3B, 0xf97316, 7, 5.5);
         }
 
+        // Wet asphalt tire mist spray during rain
+        if (
+          this.weather.getRainWeight() > 0.35 &&
+          this.controller.grounded &&
+          horizSpeed > 9 &&
+          Math.random() < 0.35
+        ) {
+          this.spawnBurst(this.controller.position, 0xcbd5e1, 1, 2.2);
+        }
+
         this.audio.updateFootsteps(dt, horizSpeed, this.controller.grounded);
+        this.audio.updateWeatherAudio(this.weather.getRainWeight(), true);
 
         this.updateGameplayInteractions(dt);
         this.updatePlayerVisuals(dt);
@@ -1474,15 +1502,19 @@ export class StriderGameEngine {
         this.updateParticles(dt);
 
         this.hudEmitTimer += dt;
-        if (this.hudEmitTimer >= 0.05) {
+        if (weatherChanged || this.hudEmitTimer >= 0.05) {
           this.hudEmitTimer = 0;
           this.emitHud();
         }
       }
     } else if (this.phase === 'title') {
       this.ghostRig.root.visible = false;
+      this.audio.updateWeatherAudio(0, false);
+      this.weather.update(dt, this.controller.position, false);
       this.updateMovingWorld(dt, totalTime);
       this.updatePlayerVisuals(dt);
+    } else {
+      this.audio.updateWeatherAudio(0, false);
     }
 
     this.updateCamera(dt);
@@ -1545,6 +1577,8 @@ export class StriderGameEngine {
     window.removeEventListener('pointermove', this.handlePointerMove);
     window.removeEventListener('pointerup', this.handlePointerUp);
 
+    this.weather.dispose();
+    this.audio.dispose();
     this.level.dispose();
     this.ghostRig.dispose();
     this.textures.dispose();

@@ -31,6 +31,7 @@ export interface BuiltLevel {
   hazards: HazardEntity[];
   crates: PushCrate[];
   initialCratePositions: { x: number; y: number; z: number }[];
+  trackMaterial: THREE.MeshStandardMaterial;
   dispose: () => void;
 }
 
@@ -619,6 +620,7 @@ export function buildLevel(textures: ProceduralTextureSet): BuiltLevel {
     hazards,
     crates,
     initialCratePositions,
+    trackMaterial: trackMat,
     dispose: () => {
       disposables.forEach((d) => d.dispose());
     },

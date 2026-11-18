@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Camera,
+  CloudFog,
+  CloudRain,
   Ghost,
   Pause,
   Play,
   RotateCcw,
+  Sun,
   Volume2,
   VolumeX,
 } from 'lucide-react';
@@ -37,6 +40,7 @@ const INITIAL_HUD: HudSnapshot = {
   comboEventLabel: '',
   bestCombo: 0,
   sectorName: 'SECTOR 1 · START PLAZA',
+  weather: 'clear',
   muted: false,
   cameraMode: 'dynamic',
   ghostAvailable: false,
@@ -250,6 +254,32 @@ export default function App() {
               <div className="flex flex-wrap items-center gap-2">
                 <div className="w-fit rounded-lg border border-slate-800/80 bg-slate-950/82 px-3 py-1 text-[11px] font-bold tracking-widest text-amber-300 uppercase">
                   {hud.sectorName}
+                </div>
+                <div
+                  className={`flex w-fit items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-bold tracking-wider uppercase ${
+                    hud.weather === 'rain'
+                      ? 'border-sky-400/50 bg-slate-950/88 text-sky-300'
+                      : hud.weather === 'fog'
+                        ? 'border-slate-400/50 bg-slate-950/88 text-slate-200'
+                        : 'border-slate-800/80 bg-slate-950/82 text-slate-300'
+                  }`}
+                >
+                  {hud.weather === 'rain' ? (
+                    <>
+                      <CloudRain className="h-3.5 w-3.5 text-sky-300" />
+                      <span>LIGHT RAIN · WET GRIP</span>
+                    </>
+                  ) : hud.weather === 'fog' ? (
+                    <>
+                      <CloudFog className="h-3.5 w-3.5 text-slate-200" />
+                      <span>CANYON FOG · DAMP GRIP</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sun className="h-3.5 w-3.5 text-amber-300" />
+                      <span>CLEAR SKY</span>
+                    </>
+                  )}
                 </div>
                 {hud.bestLapTime !== null && (
                   <div className="w-fit rounded-lg border border-slate-800/80 bg-slate-950/82 px-3 py-1 text-[11px] font-bold tracking-wider text-sky-300 tabular-nums uppercase">
