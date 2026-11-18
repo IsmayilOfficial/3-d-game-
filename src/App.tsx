@@ -8,6 +8,7 @@ import {
   VolumeX,
 } from 'lucide-react';
 import { Minimap } from './components/Minimap';
+import { Speedometer } from './components/Speedometer';
 import { StriderGameEngine } from './game/engine';
 import { HudSnapshot } from './game/types';
 
@@ -235,7 +236,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Top-Right: Timer, Orbs, Speed, Utility Buttons & Transparent 2D Mini-Map */}
+            {/* Top-Right: Timer, Current Lap, Orbs, Utility Buttons & Transparent 2D Mini-Map */}
             <div className="flex flex-col items-end gap-2">
               <div className="flex items-start gap-2.5">
                 <div className="flex items-center gap-4 rounded-xl border border-slate-700/80 bg-slate-950/88 px-4 py-2 tabular-nums">
@@ -263,15 +264,6 @@ export default function App() {
                     </span>
                     <span className="text-base font-extrabold text-amber-400">
                       {hud.orbsCollected}/{hud.totalOrbs}
-                    </span>
-                  </div>
-                  <div className="h-6 w-px bg-slate-800" />
-                  <div className="flex flex-col items-end">
-                    <span className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
-                      Speed
-                    </span>
-                    <span className="text-base font-extrabold text-sky-400">
-                      {hud.speed} <span className="text-[10px] font-semibold text-slate-400">KM/H</span>
                     </span>
                   </div>
                 </div>
@@ -308,8 +300,9 @@ export default function App() {
             </div>
           </div>
 
-          {/* Bottom Perimeter: Dash Bar & Compact Hint */}
-          <div className="flex flex-col items-center gap-2">
+          {/* Bottom Perimeter: Nitro Bar, Controls Hint & Circular Speedometer */}
+          <div className="flex items-end justify-between gap-4">
+            <div className="hidden w-[128px] shrink-0 md:block" />
             <div className="flex items-center gap-3 rounded-xl border border-slate-700/80 bg-slate-950/88 px-4 py-2">
               <span className="text-[11px] font-bold tracking-wider text-sky-300 uppercase">
                 Nitro
@@ -323,10 +316,11 @@ export default function App() {
                   }}
                 />
               </div>
-              <span className="text-[11px] font-semibold text-slate-400">
+              <span className="hidden text-[11px] font-semibold text-slate-400 sm:inline">
                 R Respawn &nbsp;·&nbsp; C Cam ({hud.cameraMode === 'chase' ? 'Manual' : 'Auto'}) &nbsp;·&nbsp; Esc Pause
               </span>
             </div>
+            <Speedometer speed={hud.speed} />
           </div>
         </div>
       )}
