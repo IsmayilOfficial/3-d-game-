@@ -31,6 +31,9 @@ export interface HudSnapshot {
   elapsedTime: number;
   bestTime: number | null;
   speed: number;
+  currentLap: number;
+  totalLaps: number;
+  circuitsCompleted: number;
   checkpointIndex: number;
   totalCheckpoints: number;
   orbsCollected: number;

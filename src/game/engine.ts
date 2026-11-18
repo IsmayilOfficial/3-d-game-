@@ -61,6 +61,9 @@ export class StriderGameEngine {
   private hitstopTimer = 0;
   private combo = 0;
   private comboTimer = 0;
+  private currentLap = 1;
+  private readonly totalLaps = 3;
+  private circuitsCompleted = 0;
   private checkpointIndex = 0;
   private orbsCollected = 0;
   private currentSector = 'SECTOR 1 · START PLAZA';
@@ -97,6 +100,11 @@ export class StriderGameEngine {
     try {
       const saved = localStorage.getItem('apex_strider_best_time');
       if (saved) this.bestTime = parseFloat(saved);
+      const savedCircuits = localStorage.getItem('apex_strider_circuits_completed');
+      if (savedCircuits) {
+        const parsed = parseInt(savedCircuits, 10);
+        if (!Number.isNaN(parsed) && parsed >= 0) this.circuitsCompleted = parsed;
+      }
     } catch {
       // Ignore storage errors
     }
@@ -412,6 +420,7 @@ export class StriderGameEngine {
     this.hitstopTimer = 0;
     this.combo = 0;
     this.comboTimer = 0;
+    this.currentLap = 1;
     this.checkpointIndex = 0;
     this.orbsCollected = 0;
     this.currentSector = 'SECTOR 1 · START PLAZA';
@@ -640,19 +649,31 @@ export class StriderGameEngine {
         mat.emissive.setHex(0x16a34a);
 
         if (i === this.level.checkpoints.length - 1) {
-          // Victory!
-          this.phase = 'victory';
-          if (this.bestTime === null || this.elapsedTime < this.bestTime) {
-            this.bestTime = this.elapsedTime;
-            try {
-              localStorage.setItem('apex_strider_best_time', this.bestTime.toFixed(2));
-            } catch {
-              // Ignore storage errors
-            }
+          this.circuitsCompleted++;
+          try {
+            localStorage.setItem('apex_strider_circuits_completed', String(this.circuitsCompleted));
+          } catch {
+            // Ignore storage errors
           }
-          this.audio.playVictory();
-          this.spawnBurst(pos, 0xfbbf24, 32, 11);
-          this.emitHud();
+
+          if (this.currentLap < this.totalLaps) {
+            this.advanceToNextLap();
+          } else {
+            // Final lap complete -> Victory!
+            this.phase = 'victory';
+            if (this.bestTime === null || this.elapsedTime < this.bestTime) {
+              this.bestTime = this.elapsedTime;
+              try {
+                localStorage.setItem('apex_strider_best_time', this.bestTime.toFixed(2));
+              } catch {
+                // Ignore storage errors
+              }
+            }
+            this.audio.playVictory();
+            this.spawnBurst(pos, 0xfbbf24, 32, 11);
+            this.emitHud();
+          }
+          break;
         } else {
           this.audio.playCheckpoint();
           this.spawnBurst(cp.position, 0x22c55e, 18, 7.5);
@@ -726,6 +747,44 @@ export class StriderGameEngine {
     if (pos.y <= terrainFloor + 0.35 && pos.z < -6) {
       this.respawnAtCheckpoint();
     }
+  }
+
+  private advanceToNextLap(): void {
+    this.currentLap++;
+    this.checkpointIndex = 0;
+    this.currentSector = `LAP ${this.currentLap} · START PLAZA`;
+
+    // Restore checkpoint gates for the next lap
+    this.level.checkpoints.forEach((cp, idx) => {
+      cp.cleared = false;
+      const isFinish = idx === this.level.checkpoints.length - 1;
+      const mat = cp.ringMesh.material as THREE.MeshStandardMaterial;
+      mat.color.setHex(isFinish ? 0xfbbf24 : 0x38bdf8);
+      mat.emissive.setHex(isFinish ? 0xf59e0b : 0x0284c7);
+    });
+
+    // Reset crates back to initial positions for the new lap
+    this.level.crates.forEach((crate, idx) => {
+      const init = this.level.initialCratePositions[idx];
+      crate.position.set(init.x, init.y, init.z);
+      crate.velocity.set(0, 0, 0);
+      const h = crate.halfSize;
+      crate.collider.minX = init.x - h;
+      crate.collider.maxX = init.x + h;
+      crate.collider.minY = init.y;
+      crate.collider.maxY = init.y + h * 2;
+      crate.collider.minZ = init.z - h;
+      crate.collider.maxZ = init.z + h;
+      crate.mesh.position.copy(crate.position);
+    });
+
+    const spawnPos = new THREE.Vector3(0, 0.25, 12);
+    this.controller.reset(spawnPos, Math.PI);
+    this.cameraYaw = 0;
+    this.boostFovTimer = 0.45;
+    this.audio.playCheckpoint();
+    this.spawnBurst(spawnPos, 0xfbbf24, 24, 9);
+    this.emitHud();
   }
 
   private updatePlayerVisuals(dt: number): void {
@@ -929,6 +988,9 @@ export class StriderGameEngine {
       elapsedTime: this.elapsedTime,
       bestTime: this.bestTime,
       speed: Math.round(speed * 3.6), // km/h feel
+      currentLap: this.currentLap,
+      totalLaps: this.totalLaps,
+      circuitsCompleted: this.circuitsCompleted,
       checkpointIndex: this.checkpointIndex,
       totalCheckpoints: this.level.checkpoints.length,
       orbsCollected: this.orbsCollected,

@@ -16,6 +16,9 @@ const INITIAL_HUD: HudSnapshot = {
   elapsedTime: 0,
   bestTime: null,
   speed: 0,
+  currentLap: 1,
+  totalLaps: 3,
+  circuitsCompleted: 0,
   checkpointIndex: 0,
   totalCheckpoints: 7,
   orbsCollected: 0,
@@ -221,6 +224,10 @@ export default function App() {
                 <div className="text-xs font-bold tracking-wider text-sky-300 tabular-nums">
                   GATE {hud.checkpointIndex}/{hud.totalCheckpoints}
                 </div>
+                <div className="h-4 w-px bg-slate-700" />
+                <div className="text-xs font-bold tracking-wider text-emerald-300 tabular-nums">
+                  CIRCUITS {hud.circuitsCompleted}
+                </div>
               </div>
 
               <div className="w-fit rounded-lg border border-slate-800/80 bg-slate-950/82 px-3 py-1 text-[11px] font-bold tracking-widest text-amber-300 uppercase">
@@ -238,6 +245,15 @@ export default function App() {
                     </span>
                     <span className="text-base font-extrabold text-slate-100">
                       {formatTime(hud.elapsedTime)}
+                    </span>
+                  </div>
+                  <div className="h-6 w-px bg-slate-800" />
+                  <div className="flex flex-col items-end">
+                    <span className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
+                      Current Lap
+                    </span>
+                    <span className="text-base font-extrabold text-emerald-400">
+                      {hud.currentLap}/{hud.totalLaps}
                     </span>
                   </div>
                   <div className="h-6 w-px bg-slate-800" />
@@ -336,7 +352,7 @@ export default function App() {
                 </h2>
               </div>
 
-              <div className="mb-6 grid grid-cols-3 gap-3 rounded-xl border border-slate-800 bg-slate-900/90 p-3.5 text-center tabular-nums">
+              <div className="mb-6 grid grid-cols-4 gap-2 rounded-xl border border-slate-800 bg-slate-900/90 p-3.5 text-center tabular-nums">
                 <div>
                   <div className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
                     Time
@@ -347,10 +363,18 @@ export default function App() {
                 </div>
                 <div>
                   <div className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
-                    Gates
+                    Current Lap
+                  </div>
+                  <div className="mt-0.5 text-base font-bold text-emerald-400">
+                    {hud.currentLap}/{hud.totalLaps}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
+                    Circuits
                   </div>
                   <div className="mt-0.5 text-base font-bold text-sky-400">
-                    {hud.checkpointIndex}/{hud.totalCheckpoints}
+                    {hud.circuitsCompleted}
                   </div>
                 </div>
                 <div>
