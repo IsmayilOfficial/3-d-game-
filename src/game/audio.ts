@@ -46,33 +46,39 @@ export class GameAudio {
 
   public updateFootsteps(dt: number, speed: number, grounded: boolean): void {
     if (!grounded || speed < 2.2) {
-      this.stepTimer = 0.08;
+      this.stepTimer = 0.06;
       return;
     }
-    const interval = Math.max(0.16, 0.42 - speed * 0.012);
+    const interval = Math.max(0.055, 0.14 - speed * 0.003);
     this.stepTimer -= dt;
     if (this.stepTimer <= 0) {
       this.stepTimer = interval;
-      this.playFootstep(Math.min(1, speed / 18));
+      this.playEnginePulse(Math.min(1, speed / 22));
     }
   }
 
-  private playFootstep(intensity: number): void {
+  private playEnginePulse(intensity: number): void {
     const ctx = this.ensureContext();
     if (!ctx || !this.masterGain) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.type = 'triangle';
-    const baseFreq = 95 + Math.random() * 25;
+    osc.type = 'sawtooth';
+    const baseFreq = 58 + intensity * 64 + Math.random() * 6;
     osc.frequency.setValueAtTime(baseFreq, now);
-    osc.frequency.exponentialRampToValueAtTime(38, now + 0.055);
-    gain.gain.setValueAtTime(0.08 * (0.4 + intensity * 0.6), now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
-    osc.connect(gain);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.88, now + 0.05);
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 260 + intensity * 380;
+
+    gain.gain.setValueAtTime(0.045 * (0.35 + intensity * 0.65), now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
+    osc.connect(filter);
+    filter.connect(gain);
     gain.connect(this.masterGain);
     osc.start(now);
-    osc.stop(now + 0.065);
+    osc.stop(now + 0.06);
   }
 
   public playJump(isDouble = false): void {

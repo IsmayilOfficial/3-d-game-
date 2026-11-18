@@ -63,7 +63,7 @@ export class StriderGameEngine {
   private checkpointIndex = 0;
   private orbsCollected = 0;
   private currentSector = 'SECTOR 1 · START PLAZA';
-  private cameraMode: 'chase' | 'dynamic' = 'chase';
+  private cameraMode: 'chase' | 'dynamic' = 'dynamic';
 
   // Animation & camera juice
   private squashY = 1;
@@ -102,28 +102,38 @@ export class StriderGameEngine {
 
     // 1. Software WebGL probe (renderer string only, context freed immediately)
     this.isSoftwareGl = (() => {
-      const probeCanvas = document.createElement('canvas');
-      const gl = probeCanvas.getContext('webgl2');
-      if (!gl) return true;
-      const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
-      const gpu = String(gl.getParameter(param));
-      gl.getExtension('WEBGL_lose_context')?.loseContext();
-      return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
+      try {
+        const probeCanvas = document.createElement('canvas');
+        const gl = probeCanvas.getContext('webgl2');
+        if (!gl) return true;
+        const ext = gl.getExtension('WEBGL_debug_renderer_info');
+        const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
+        const gpu = String(gl.getParameter(param) ?? '');
+        gl.getExtension('WEBGL_lose_context')?.loseContext();
+        return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
+      } catch {
+        return true;
+      }
     })();
 
-    // 2. WebGLRenderer setup
-    this.renderer = new THREE.WebGLRenderer({
-      antialias: !this.isSoftwareGl,
-      powerPreference: 'high-performance',
-    });
+    // 2. WebGLRenderer setup with safe fallback
+    try {
+      this.renderer = new THREE.WebGLRenderer({
+        antialias: !this.isSoftwareGl,
+        powerPreference: 'high-performance',
+      });
+    } catch {
+      this.renderer = new THREE.WebGLRenderer({ antialias: false });
+    }
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
-    this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.shadowMap.enabled = !this.isSoftwareGl;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.setSize(container.clientWidth || window.innerWidth, container.clientHeight || window.innerHeight);
+    const initW = Math.max(1, container.clientWidth || window.innerWidth || 1280);
+    const initH = Math.max(1, container.clientHeight || window.innerHeight || 720);
+    this.renderer.setSize(initW, initH);
     this.renderer.domElement.style.display = 'block';
     this.renderer.domElement.style.width = '100%';
     this.renderer.domElement.style.height = '100%';
@@ -136,13 +146,14 @@ export class StriderGameEngine {
     this.scene.fog = new THREE.FogExp2(0x9dd5f3, 0.0046);
 
     // 4. Camera
-    const aspect = (container.clientWidth || window.innerWidth) / (container.clientHeight || window.innerHeight);
-    this.camera = new THREE.PerspectiveCamera(62, aspect, 0.2, 420);
+    this.camera = new THREE.PerspectiveCamera(62, initW / initH, 0.2, 420);
 
     // 5. Mandatory Studio RoomEnvironment PMREM
     const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const roomEnv = new RoomEnvironment();
+    this.envTex = pmrem.fromScene(roomEnv, 0.04).texture;
     this.scene.environment = this.envTex;
+    roomEnv.dispose();
     pmrem.dispose();
 
     // 6. Warm/Cool 3-Point Lighting Rig
@@ -225,18 +236,25 @@ export class StriderGameEngine {
 
     const dom = this.renderer.domElement;
     dom.addEventListener('pointerdown', this.handlePointerDown);
+    dom.addEventListener('webglcontextlost', this.handleContextLost);
     window.addEventListener('pointermove', this.handlePointerMove);
     window.addEventListener('pointerup', this.handlePointerUp);
   }
 
+  private handleContextLost = (e: Event): void => {
+    e.preventDefault();
+    cancelAnimationFrame(this.frameId);
+    clearTimeout(this.frameId);
+  };
+
   private handleResize = (): void => {
     if (this.disposed) return;
-    const w = this.container.clientWidth || window.innerWidth;
-    const h = this.container.clientHeight || window.innerHeight;
+    const w = Math.max(1, this.container.clientWidth || window.innerWidth || 1280);
+    const h = Math.max(1, this.container.clientHeight || window.innerHeight || 720);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
-    this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2));
   };
 
   private handleKeyDown = (e: KeyboardEvent): void => {
@@ -708,53 +726,70 @@ export class StriderGameEngine {
     this.squashXZ = THREE.MathUtils.damp(this.squashXZ, 1, 14, dt);
     this.playerRig.bodyPivot.scale.set(this.squashXZ, this.squashY, this.squashXZ);
 
-    // Forward lean proportional to speed
+    // Car suspension pitch (squat on accel / tilt in air) & cornering body roll
     const horizSpeed = Math.hypot(this.controller.velocity.x, this.controller.velocity.z);
-    const targetLean = THREE.MathUtils.clamp(horizSpeed / 22, 0, 1) * 0.24;
+    const targetPitch = !this.controller.grounded
+      ? THREE.MathUtils.clamp(-this.controller.velocity.y * 0.022, -0.28, 0.28)
+      : -THREE.MathUtils.clamp(horizSpeed / 26, 0, 1) * 0.065;
     this.playerRig.bodyPivot.rotation.x = THREE.MathUtils.damp(
       this.playerRig.bodyPivot.rotation.x,
-      targetLean,
+      targetPitch,
       10,
       dt,
     );
 
-    // Procedural stride animation
-    if (this.controller.grounded && horizSpeed > 0.6) {
-      this.runCycle += dt * (4.5 + horizSpeed * 0.55);
-      const swing = Math.sin(this.runCycle) * Math.min(0.78, horizSpeed * 0.055);
-      this.playerRig.leftLeg.rotation.x = swing;
-      this.playerRig.rightLeg.rotation.x = -swing;
-      this.playerRig.leftArm.rotation.x = -swing * 0.85;
-      this.playerRig.rightArm.rotation.x = swing * 0.85;
-    } else if (!this.controller.grounded) {
-      this.playerRig.leftLeg.rotation.x = THREE.MathUtils.damp(this.playerRig.leftLeg.rotation.x, -0.35, 10, dt);
-      this.playerRig.rightLeg.rotation.x = THREE.MathUtils.damp(this.playerRig.rightLeg.rotation.x, 0.25, 10, dt);
-      this.playerRig.leftArm.rotation.x = THREE.MathUtils.damp(this.playerRig.leftArm.rotation.x, -0.45, 10, dt);
-      this.playerRig.rightArm.rotation.x = THREE.MathUtils.damp(this.playerRig.rightArm.rotation.x, -0.45, 10, dt);
-    } else {
-      this.playerRig.leftLeg.rotation.x = THREE.MathUtils.damp(this.playerRig.leftLeg.rotation.x, 0, 12, dt);
-      this.playerRig.rightLeg.rotation.x = THREE.MathUtils.damp(this.playerRig.rightLeg.rotation.x, 0, 12, dt);
-      this.playerRig.leftArm.rotation.x = THREE.MathUtils.damp(this.playerRig.leftArm.rotation.x, 0, 12, dt);
-      this.playerRig.rightArm.rotation.x = THREE.MathUtils.damp(this.playerRig.rightArm.rotation.x, 0, 12, dt);
-    }
+    const targetRoll = -this.controller.steerDelta * Math.min(1, horizSpeed / 12) * 0.14;
+    this.playerRig.bodyPivot.rotation.z = THREE.MathUtils.damp(
+      this.playerRig.bodyPivot.rotation.z,
+      targetRoll,
+      10,
+      dt,
+    );
 
-    // Jetpack flame intensity
-    const boosting = this.controller.dashTimer > 0 || this.boostFovTimer > 0 || !this.controller.grounded;
-    const flameTarget = boosting ? 1.35 + Math.sin(performance.now() * 0.04) * 0.25 : 0.35;
+    // Front wheel steering knuckles
+    const targetSteer = THREE.MathUtils.clamp(this.controller.steerDelta * 0.45, -0.42, 0.42);
+    this.playerRig.steerFL.rotation.y = THREE.MathUtils.damp(
+      this.playerRig.steerFL.rotation.y,
+      targetSteer,
+      14,
+      dt,
+    );
+    this.playerRig.steerFR.rotation.y = THREE.MathUtils.damp(
+      this.playerRig.steerFR.rotation.y,
+      targetSteer,
+      14,
+      dt,
+    );
+
+    // Spin all 4 wheels proportional to ground speed (radius = 0.33m)
+    const wheelSpinDelta = (horizSpeed * dt) / 0.33;
+    this.playerRig.wheelFL.rotation.x += wheelSpinDelta;
+    this.playerRig.wheelFR.rotation.x += wheelSpinDelta;
+    this.playerRig.wheelRL.rotation.x += wheelSpinDelta;
+    this.playerRig.wheelRR.rotation.x += wheelSpinDelta;
+
+    // Rear nitro exhaust flame intensity
+    const boosting = this.controller.dashTimer > 0 || this.boostFovTimer > 0;
+    const drivingFast = horizSpeed > 12;
+    const flameTarget = boosting
+      ? 1.55 + Math.sin(performance.now() * 0.045) * 0.3
+      : drivingFast
+        ? 0.55 + Math.sin(performance.now() * 0.03) * 0.12
+        : 0.18;
     this.playerRig.thrusterFlameL.scale.set(1, flameTarget, 1);
     this.playerRig.thrusterFlameR.scale.set(1, flameTarget, 1);
 
-    // Invulnerability hit flash on visor & core
+    // Invulnerability hit flash on headlights & taillights
     if (this.invulnTimer > 0) {
       const flash = Math.sin(performance.now() * 0.045) > 0;
-      this.playerRig.visorMat.emissive.setHex(flash ? 0xef4444 : 0x0ea5e9);
-      this.playerRig.coreMat.emissive.setHex(flash ? 0xef4444 : 0x38bdf8);
+      this.playerRig.headlightMat.emissive.setHex(flash ? 0xef4444 : 0x38bdf8);
+      this.playerRig.taillightMat.emissiveIntensity = flash ? 3.2 : 0.8;
     } else {
-      this.playerRig.visorMat.emissive.setHex(0x0ea5e9);
-      this.playerRig.coreMat.emissive.setHex(0x38bdf8);
+      this.playerRig.headlightMat.emissive.setHex(0x38bdf8);
+      this.playerRig.taillightMat.emissiveIntensity = 1.6;
     }
 
-    // Update shadow camera to follow player
+    // Update shadow camera to follow car
     this.sunLight.position.set(pos.x + 24, pos.y + 38, pos.z + 20);
     this.sunLight.target.position.copy(pos);
   }
@@ -1003,19 +1038,28 @@ export class StriderGameEngine {
   }
 
   private afterDraw(cb: () => void): void {
-    const gl = this.renderer.getContext() as WebGL2RenderingContext;
-    const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-    gl.flush();
+    const gl = this.renderer.getContext();
+    if (!gl || typeof (gl as WebGL2RenderingContext).fenceSync !== 'function') {
+      this.frameId = window.setTimeout(cb, 80);
+      return;
+    }
+    const gl2 = gl as WebGL2RenderingContext;
+    const sync = gl2.fenceSync(gl2.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    if (!sync) {
+      this.frameId = window.setTimeout(cb, 80);
+      return;
+    }
+    gl2.flush();
     const poll = () => {
       if (this.disposed) {
-        if (sync) gl.deleteSync(sync);
+        gl2.deleteSync(sync);
         return;
       }
-      const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
-      if (state === gl.UNSIGNALED) {
+      const state = gl2.getSyncParameter(sync, gl2.SYNC_STATUS);
+      if (state === gl2.UNSIGNALED) {
         this.frameId = window.setTimeout(poll, 5);
       } else {
-        if (sync) gl.deleteSync(sync);
+        gl2.deleteSync(sync);
         this.frameId = window.setTimeout(cb, 80);
       }
     };
@@ -1035,6 +1079,7 @@ export class StriderGameEngine {
 
     const dom = this.renderer.domElement;
     dom.removeEventListener('pointerdown', this.handlePointerDown);
+    dom.removeEventListener('webglcontextlost', this.handleContextLost);
     window.removeEventListener('pointermove', this.handlePointerMove);
     window.removeEventListener('pointerup', this.handlePointerUp);
 

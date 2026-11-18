@@ -33,7 +33,7 @@ const INITIAL_HUD: HudSnapshot = {
   combo: 0,
   sectorName: 'SECTOR 1 · START PLAZA',
   muted: false,
-  cameraMode: 'chase',
+  cameraMode: 'dynamic',
 };
 
 function formatTime(seconds: number): string {
@@ -49,6 +49,7 @@ export default function App() {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<StriderGameEngine | null>(null);
   const [hud, setHud] = useState<HudSnapshot>(INITIAL_HUD);
+  const [initError, setInitError] = useState<string | null>(null);
   const [showUnityModal, setShowUnityModal] = useState(false);
   const [activeScriptTab, setActiveScriptTab] = useState<'controller' | 'collision'>('controller');
   const [copied, setCopied] = useState(false);
@@ -57,15 +58,22 @@ export default function App() {
     const container = mountRef.current;
     if (!container) return;
 
-    const engine = new StriderGameEngine(container, (snapshot) => {
-      setHud(snapshot);
-    });
-    engineRef.current = engine;
+    try {
+      const engine = new StriderGameEngine(container, (snapshot) => {
+        setHud(snapshot);
+      });
+      engineRef.current = engine;
+      setInitError(null);
 
-    return () => {
-      engine.dispose();
-      engineRef.current = null;
-    };
+      return () => {
+        engine.dispose();
+        engineRef.current = null;
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to initialize 3D WebGL context.';
+      setInitError(message);
+      return undefined;
+    }
   }, []);
 
   const handleCopyScript = async () => {
@@ -87,13 +95,29 @@ export default function App() {
       {/* Isolated WebGL Viewport Container */}
       <div ref={mountRef} className="absolute inset-0" />
 
+      {initError && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-950/90 p-6">
+          <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 text-center shadow-2xl">
+            <h2 className="text-lg font-bold text-white">3D Renderer Unavailable</h2>
+            <p className="mt-2 text-xs text-slate-300">{initError}</p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="mt-4 rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-400"
+            >
+              Reload App
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* TITLE SCREEN OVERLAY */}
-      {hud.phase === 'title' && !showUnityModal && (
+      {!initError && hud.phase === 'title' && !showUnityModal && (
         <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-6 sm:p-10">
           {/* Top-left minimal mute button */}
           <div className="flex items-center justify-between">
             <div className="rounded-lg border border-slate-900/20 bg-slate-950/85 px-3 py-1.5 text-xs font-semibold tracking-wider text-sky-300 uppercase">
-              3D Character &amp; Collision Circuit
+              3D Stunt Car &amp; Collision Circuit
             </div>
             <button
               type="button"
@@ -189,7 +213,7 @@ export default function App() {
           {/* Single flat control-hint line */}
           <div className="flex justify-center">
             <div className="rounded-lg border border-slate-800/80 bg-slate-950/88 px-4 py-2 text-center text-xs font-medium tracking-wide text-slate-200">
-              WASD / Arrows Move &nbsp;·&nbsp; Space Jump (Double Jump) &nbsp;·&nbsp; Shift Dash &nbsp;·&nbsp; Drag / Q-E Camera &nbsp;·&nbsp; Esc Pause
+              WASD / Arrows Drive &nbsp;·&nbsp; Space Jump (Double Jump) &nbsp;·&nbsp; Shift Nitro Boost &nbsp;·&nbsp; Drag / Q-E Camera &nbsp;·&nbsp; Esc Pause
             </div>
           </div>
         </div>
@@ -294,7 +318,7 @@ export default function App() {
           <div className="flex flex-col items-center gap-2">
             <div className="flex items-center gap-3 rounded-xl border border-slate-700/80 bg-slate-950/88 px-4 py-2">
               <span className="text-[11px] font-bold tracking-wider text-sky-300 uppercase">
-                Dash
+                Nitro
               </span>
               <div className="h-2 w-28 overflow-hidden rounded-full bg-slate-800">
                 <div

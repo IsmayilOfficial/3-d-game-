@@ -54,14 +54,15 @@ export class CharacterController {
   public velocity = new THREE.Vector3(0, 0, 0);
   public yaw = Math.PI; // Facing -Z down the start straightaway
 
-  // Capsule dimensions (pivot at bottom-center feet)
-  public readonly radius = 0.52;
-  public readonly height = 1.85;
+  // Capsule dimensions (pivot at bottom-center chassis base)
+  public readonly radius = 0.72;
+  public readonly height = 1.15;
   public readonly stepOffset = 0.5;
+  public steerDelta = 0;
 
   // Tuning constants (Unity-style meters/sec)
-  public readonly walkSpeed = 13.5;
-  public readonly sprintSpeed = 18.2;
+  public readonly walkSpeed = 16.5;
+  public readonly sprintSpeed = 21.5;
   public readonly groundAccel = 68.0;
   public readonly groundFriction = 14.0;
   public readonly airAccel = 26.0;
@@ -143,12 +144,15 @@ export class CharacterController {
     const wishMag = _wishDir.length();
     if (wishMag > 0.001) {
       _wishDir.divideScalar(Math.max(1, wishMag));
-      // Smoothly rotate character toward movement direction
+      // Smoothly rotate car toward movement direction
       const targetYaw = Math.atan2(_wishDir.x, _wishDir.z);
       let diff = targetYaw - this.yaw;
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
-      this.yaw += diff * (1 - Math.exp(-16 * dt));
+      this.steerDelta = THREE.MathUtils.clamp(diff, -1, 1);
+      this.yaw += diff * (1 - Math.exp(-13 * dt));
+    } else {
+      this.steerDelta = 0;
     }
 
     // 4. Dash activation

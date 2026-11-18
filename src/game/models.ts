@@ -3,26 +3,32 @@ import * as THREE from 'three';
 export interface PlayerRig {
   root: THREE.Group;
   bodyPivot: THREE.Group;
-  leftLeg: THREE.Group;
-  rightLeg: THREE.Group;
-  leftArm: THREE.Group;
-  rightArm: THREE.Group;
+  steerFL: THREE.Group;
+  steerFR: THREE.Group;
+  wheelFL: THREE.Group;
+  wheelFR: THREE.Group;
+  wheelRL: THREE.Group;
+  wheelRR: THREE.Group;
   thrusterFlameL: THREE.Mesh;
   thrusterFlameR: THREE.Mesh;
-  visorMat: THREE.MeshStandardMaterial;
-  coreMat: THREE.MeshStandardMaterial;
+  headlightMat: THREE.MeshStandardMaterial;
+  taillightMat: THREE.MeshStandardMaterial;
   contactShadow: THREE.Mesh;
 }
 
+/**
+ * Composite 10-part procedural 3D GT Rally Car pivoted at bottom-center (0, 0, 0).
+ * Front bumper faces +Z, rear spoiler/exhausts face -Z.
+ */
 export function createPlayerModel(contactShadowMap: THREE.Texture): PlayerRig {
   const root = new THREE.Group();
 
-  // Contact shadow grounded at feet (offset slightly above surface)
-  const shadowGeo = new THREE.PlaneGeometry(2.1, 2.1);
+  // Contact shadow grounded beneath chassis
+  const shadowGeo = new THREE.PlaneGeometry(2.6, 3.6);
   const shadowMat = new THREE.MeshBasicMaterial({
     map: contactShadowMap,
     transparent: true,
-    opacity: 0.48,
+    opacity: 0.55,
     depthWrite: false,
   });
   const contactShadow = new THREE.Mesh(shadowGeo, shadowMat);
@@ -30,188 +36,208 @@ export function createPlayerModel(contactShadowMap: THREE.Texture): PlayerRig {
   contactShadow.position.y = 0.025;
   root.add(contactShadow);
 
-  // Body pivot at bottom-center (0, 0, 0) for squash-and-stretch & lean
+  // Body pivot for suspension roll/pitch and jump squash-and-stretch
   const bodyPivot = new THREE.Group();
   root.add(bodyPivot);
 
-  // Varied PBR materials (roughness delta >= 0.25)
-  const suitMat = new THREE.MeshStandardMaterial({
-    color: 0x1e293b,
-    roughness: 0.78,
-    metalness: 0.12,
-  });
-  const armorMat = new THREE.MeshPhysicalMaterial({
-    color: 0xf8fafc,
-    roughness: 0.24,
-    metalness: 0.25,
-    clearcoat: 0.85,
-    clearcoatRoughness: 0.15,
-  });
-  const accentMat = new THREE.MeshStandardMaterial({
+  // Varied PBR materials (roughness delta >= 0.25 between paint, carbon, rubber, metal, glass)
+  const paintMat = new THREE.MeshPhysicalMaterial({
     color: 0xf97316,
-    roughness: 0.32,
-    metalness: 0.45,
-  });
-  const darkMetalMat = new THREE.MeshStandardMaterial({
-    color: 0x334155,
-    roughness: 0.28,
-    metalness: 0.88,
-  });
-  const visorMat = new THREE.MeshStandardMaterial({
-    color: 0x38bdf8,
-    emissive: 0x0ea5e9,
-    emissiveIntensity: 1.7,
-    roughness: 0.12,
-    metalness: 0.85,
-  });
-  const coreMat = new THREE.MeshStandardMaterial({
-    color: 0x38bdf8,
-    emissive: 0x38bdf8,
-    emissiveIntensity: 1.5,
     roughness: 0.2,
+    metalness: 0.45,
+    clearcoat: 1.0,
+    clearcoatRoughness: 0.1,
+  });
+  const stripeMat = new THREE.MeshStandardMaterial({
+    color: 0xf8fafc,
+    roughness: 0.26,
     metalness: 0.2,
   });
+  const carbonMat = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    roughness: 0.72,
+    metalness: 0.18,
+  });
+  const canopyMat = new THREE.MeshPhysicalMaterial({
+    color: 0x0f172a,
+    roughness: 0.08,
+    metalness: 0.15,
+    clearcoat: 1.0,
+    clearcoatRoughness: 0.06,
+  });
+  const alloyMat = new THREE.MeshStandardMaterial({
+    color: 0xcbd5e1,
+    roughness: 0.22,
+    metalness: 0.9,
+  });
+  const tireMat = new THREE.MeshStandardMaterial({
+    color: 0x171717,
+    roughness: 0.88,
+    metalness: 0.05,
+  });
+  const headlightMat = new THREE.MeshStandardMaterial({
+    color: 0xe0f2fe,
+    emissive: 0x38bdf8,
+    emissiveIntensity: 1.9,
+    roughness: 0.15,
+  });
+  const taillightMat = new THREE.MeshStandardMaterial({
+    color: 0xfca5a5,
+    emissive: 0xef4444,
+    emissiveIntensity: 1.6,
+    roughness: 0.2,
+  });
 
-  // 1-2. Articulated Legs + Kinetic Boots
-  const makeLeg = (xOffset: number): THREE.Group => {
-    const legGroup = new THREE.Group();
-    legGroup.position.set(xOffset, 0.72, 0);
+  // 1. Sculpted Aerodynamic Lower Chassis (ExtrudeGeometry side profile extruded across width)
+  const sideProfile = new THREE.Shape();
+  sideProfile.moveTo(-1.32, 0.24); // rear bottom
+  sideProfile.lineTo(1.36, 0.22);  // front splitter
+  sideProfile.lineTo(1.32, 0.46);  // front nose
+  sideProfile.lineTo(0.75, 0.62);  // hood slope
+  sideProfile.lineTo(0.28, 0.96);  // windshield top
+  sideProfile.lineTo(-0.58, 0.96); // roof rear
+  sideProfile.lineTo(-1.26, 0.68); // rear deck
+  sideProfile.lineTo(-1.35, 0.44); // rear bumper
+  sideProfile.closePath();
 
-    const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.34, 4, 8), suitMat);
-    thigh.position.y = -0.24;
-    thigh.castShadow = true;
-    legGroup.add(thigh);
-
-    const boot = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.22, 0.38), armorMat);
-    boot.position.set(0, -0.61, 0.04);
-    boot.castShadow = true;
-    legGroup.add(boot);
-
-    const skateSole = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.06, 0.42), accentMat);
-    skateSole.position.set(0, -0.69, 0.04);
-    legGroup.add(skateSole);
-
-    return legGroup;
-  };
-  const leftLeg = makeLeg(-0.18);
-  const rightLeg = makeLeg(0.18);
-  bodyPivot.add(leftLeg, rightLeg);
-
-  // 3. Sculpted Beveled Torso (ExtrudeGeometry)
-  const torsoShape = new THREE.Shape();
-  torsoShape.moveTo(-0.26, 0);
-  torsoShape.lineTo(0.26, 0);
-  torsoShape.lineTo(0.32, 0.56);
-  torsoShape.lineTo(-0.32, 0.56);
-  torsoShape.closePath();
-
-  const torsoGeo = new THREE.ExtrudeGeometry(torsoShape, {
-    depth: 0.28,
+  const bodyGeo = new THREE.ExtrudeGeometry(sideProfile, {
+    depth: 1.32,
     bevelEnabled: true,
-    bevelThickness: 0.05,
-    bevelSize: 0.04,
+    bevelThickness: 0.08,
+    bevelSize: 0.05,
     bevelSegments: 2,
   });
-  torsoGeo.center();
-  const torso = new THREE.Mesh(torsoGeo, armorMat);
-  torso.position.set(0, 1.06, 0);
-  torso.castShadow = true;
-  bodyPivot.add(torso);
+  // Rotate so X-Y side profile maps to Z-Y (nose at +Z) and extrude depth centers on X
+  bodyGeo.translate(0, 0, -0.66);
+  bodyGeo.rotateY(-Math.PI / 2);
+  const chassis = new THREE.Mesh(bodyGeo, paintMat);
+  chassis.castShadow = true;
+  chassis.receiveShadow = true;
+  bodyPivot.add(chassis);
 
-  // 4. Glowing Kinetic Chest Core
-  const chestCore = new THREE.Mesh(new THREE.OctahedronGeometry(0.11, 0), coreMat);
-  chestCore.position.set(0, 1.12, 0.19);
-  chestCore.scale.set(1, 1.2, 0.5);
-  bodyPivot.add(chestCore);
+  // 2. Carbon Fiber Front Splitter & Side Skirts
+  const skirt = new THREE.Mesh(new THREE.BoxGeometry(1.52, 0.12, 2.78), carbonMat);
+  skirt.position.set(0, 0.23, 0.02);
+  skirt.castShadow = true;
+  bodyPivot.add(skirt);
 
-  // 5. Jetpack Housing & Twin Nozzles
-  const pack = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.22), darkMetalMat);
-  pack.position.set(0, 1.08, -0.24);
-  pack.castShadow = true;
-  bodyPivot.add(pack);
+  // 3. Center Racing Stripe Decal (offset slightly to prevent Z-fighting)
+  const hoodStripe = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.03, 0.85), stripeMat);
+  hoodStripe.position.set(0, 0.6, 0.98);
+  hoodStripe.rotation.x = 0.26;
+  bodyPivot.add(hoodStripe);
 
-  const makeNozzle = (x: number) => {
-    const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 0.18, 10), accentMat);
-    nozzle.position.set(x, 0.85, -0.26);
-    nozzle.rotation.x = -0.22;
-    bodyPivot.add(nozzle);
+  const roofStripe = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.03, 0.86), stripeMat);
+  roofStripe.position.set(0, 1.03, -0.16);
+  bodyPivot.add(roofStripe);
+
+  // 4. Tinted Wraparound Cockpit Canopy
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.14, 0.34, 1.15), canopyMat);
+  cabin.position.set(0, 0.82, -0.14);
+  cabin.castShadow = true;
+  bodyPivot.add(cabin);
+
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.32, 0.62), canopyMat);
+  windshield.position.set(0, 0.77, 0.38);
+  windshield.rotation.x = 0.62;
+  bodyPivot.add(windshield);
+
+  // 5. Rear GT Spoiler Wing + Twin Struts
+  const strutL = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.32, 0.24), carbonMat);
+  strutL.position.set(-0.45, 0.86, -1.16);
+  const strutR = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.32, 0.24), carbonMat);
+  strutR.position.set(0.45, 0.86, -1.16);
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(1.62, 0.08, 0.38), carbonMat);
+  wing.position.set(0, 1.02, -1.2);
+  wing.rotation.x = 0.14;
+  wing.castShadow = true;
+  const wingTipL = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.18, 0.42), paintMat);
+  wingTipL.position.set(-0.82, 1.02, -1.2);
+  const wingTipR = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.18, 0.42), paintMat);
+  wingTipR.position.set(0.82, 1.02, -1.2);
+  bodyPivot.add(strutL, strutR, wing, wingTipL, wingTipR);
+
+  // 6. Twin Glowing Headlights (+Z front) & Brake Light Bar (-Z rear)
+  const headL = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.11, 0.1), headlightMat);
+  headL.position.set(-0.48, 0.42, 1.37);
+  const headR = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.11, 0.1), headlightMat);
+  headR.position.set(0.48, 0.42, 1.37);
+  const tailBar = new THREE.Mesh(new THREE.BoxGeometry(1.22, 0.11, 0.08), taillightMat);
+  tailBar.position.set(0, 0.56, -1.36);
+  bodyPivot.add(headL, headR, tailBar);
+
+  // 7. Twin Rear Nitro Exhausts + Dynamic Flame Cones
+  const makeExhaust = (x: number) => {
+    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.1, 0.22, 12), alloyMat);
+    pipe.rotation.x = Math.PI / 2;
+    pipe.position.set(x, 0.32, -1.36);
+    bodyPivot.add(pipe);
 
     const flameMat = new THREE.MeshBasicMaterial({
       color: 0x38bdf8,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.88,
     });
-    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.36, 8), flameMat);
-    flame.position.set(x, 0.65, -0.32);
-    flame.rotation.x = Math.PI - 0.22;
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.45, 8), flameMat);
+    flame.rotation.x = -Math.PI / 2;
+    flame.position.set(x, 0.32, -1.62);
     bodyPivot.add(flame);
     return flame;
   };
-  const thrusterFlameL = makeNozzle(-0.13);
-  const thrusterFlameR = makeNozzle(0.13);
+  const thrusterFlameL = makeExhaust(-0.34);
+  const thrusterFlameR = makeExhaust(0.34);
 
-  // 6-7. Articulated Arms + Shoulder Pauldrons
-  const makeArm = (side: -1 | 1): THREE.Group => {
-    const armGroup = new THREE.Group();
-    armGroup.position.set(side * 0.39, 1.28, 0);
+  // 8-11. Four Articulated Wheels (Front steering knuckles + spinning tires & 5-spoke rims)
+  const makeWheel = (x: number, z: number, isFront: boolean): { steer: THREE.Group; spin: THREE.Group } => {
+    const steer = new THREE.Group();
+    steer.position.set(x, 0.33, z);
 
-    const pauldron = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 10), accentMat);
-    pauldron.scale.set(1.1, 0.85, 1.1);
-    armGroup.add(pauldron);
+    const spin = new THREE.Group();
+    steer.add(spin);
 
-    const forearm = new THREE.Mesh(new THREE.CapsuleGeometry(0.08, 0.32, 4, 8), suitMat);
-    forearm.position.set(side * 0.03, -0.25, 0.04);
-    forearm.castShadow = true;
-    armGroup.add(forearm);
+    const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.26, 18), tireMat);
+    tire.rotation.z = Math.PI / 2;
+    tire.castShadow = true;
+    spin.add(tire);
 
-    const gauntlet = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.16, 0.18), armorMat);
-    gauntlet.position.set(side * 0.04, -0.45, 0.06);
-    armGroup.add(gauntlet);
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.275, 12), alloyMat);
+    rim.rotation.z = Math.PI / 2;
+    spin.add(rim);
 
-    return armGroup;
+    // Cross spokes so wheel rotation is super legible at any speed
+    const spokeA = new THREE.Mesh(new THREE.BoxGeometry(0.29, 0.34, 0.055), carbonMat);
+    const spokeB = new THREE.Mesh(new THREE.BoxGeometry(0.29, 0.055, 0.34), carbonMat);
+    spin.add(spokeA, spokeB);
+
+    if (isFront) {
+      // Subtle brake caliper accent
+      const caliper = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.14, 0.14), paintMat);
+      caliper.position.set(x > 0 ? -0.06 : 0.06, 0.04, -0.08);
+      steer.add(caliper);
+    }
+
+    root.add(steer);
+    return { steer, spin };
   };
-  const leftArm = makeArm(-1);
-  const rightArm = makeArm(1);
-  bodyPivot.add(leftArm, rightArm);
 
-  // 8-9. Helmet + Glowing Curved Visor + Stabilizer Fins
-  const headGroup = new THREE.Group();
-  headGroup.position.set(0, 1.56, 0);
-
-  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 14), armorMat);
-  helmet.scale.set(0.95, 1.02, 1.08);
-  helmet.castShadow = true;
-  headGroup.add(helmet);
-
-  const visor = new THREE.Mesh(
-    new THREE.BoxGeometry(0.36, 0.12, 0.18),
-    visorMat,
-  );
-  visor.position.set(0, 0.01, 0.17);
-  headGroup.add(visor);
-
-  const finGeo = new THREE.BoxGeometry(0.04, 0.16, 0.24);
-  const finL = new THREE.Mesh(finGeo, accentMat);
-  finL.position.set(-0.22, 0.12, -0.08);
-  finL.rotation.x = -0.35;
-  const finR = new THREE.Mesh(finGeo, accentMat);
-  finR.position.set(0.22, 0.12, -0.08);
-  finR.rotation.x = -0.35;
-  headGroup.add(finL, finR);
-
-  bodyPivot.add(headGroup);
+  const fl = makeWheel(-0.78, 0.86, true);
+  const fr = makeWheel(0.78, 0.86, true);
+  const rl = makeWheel(-0.78, -0.86, false);
+  const rr = makeWheel(0.78, -0.86, false);
 
   return {
     root,
     bodyPivot,
-    leftLeg,
-    rightLeg,
-    leftArm,
-    rightArm,
+    steerFL: fl.steer,
+    steerFR: fr.steer,
+    wheelFL: fl.spin,
+    wheelFR: fr.spin,
+    wheelRL: rl.spin,
+    wheelRR: rr.spin,
     thrusterFlameL,
     thrusterFlameR,
-    visorMat,
-    coreMat,
+    headlightMat,
+    taillightMat,
     contactShadow,
   };
 }
