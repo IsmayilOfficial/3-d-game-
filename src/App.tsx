@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Camera,
+  Ghost,
   Pause,
   Play,
   RotateCcw,
@@ -16,6 +17,8 @@ const INITIAL_HUD: HudSnapshot = {
   phase: 'title',
   elapsedTime: 0,
   bestTime: null,
+  bestLapTime: null,
+  currentLapTime: 0,
   speed: 0,
   currentLap: 1,
   totalLaps: 3,
@@ -27,10 +30,17 @@ const INITIAL_HUD: HudSnapshot = {
   health: 3,
   maxHealth: 3,
   dashCooldownRatio: 0,
+  score: 0,
   combo: 0,
+  comboMultiplier: 1,
+  comboTimerRatio: 0,
+  comboEventLabel: '',
+  bestCombo: 0,
   sectorName: 'SECTOR 1 · START PLAZA',
   muted: false,
   cameraMode: 'dynamic',
+  ghostAvailable: false,
+  ghostEnabled: true,
   minimap: {
     playerX: 0,
     playerZ: 12,
@@ -181,9 +191,15 @@ export default function App() {
               </button>
             </div>
 
-            {hud.bestTime !== null && (
-              <div className="rounded-lg border border-slate-700/70 bg-slate-950/88 px-3.5 py-1.5 text-xs font-semibold tracking-wide text-amber-300 tabular-nums">
-                BEST SUMMIT TIME: {formatTime(hud.bestTime)}
+            {(hud.bestTime !== null || hud.bestLapTime !== null) && (
+              <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-700/70 bg-slate-950/88 px-3.5 py-1.5 text-xs font-semibold tracking-wide text-amber-300 tabular-nums">
+                {hud.bestTime !== null && <span>BEST SUMMIT TIME: {formatTime(hud.bestTime)}</span>}
+                {hud.bestTime !== null && hud.bestLapTime !== null && (
+                  <span className="text-slate-600" aria-hidden="true">·</span>
+                )}
+                {hud.bestLapTime !== null && (
+                  <span className="text-sky-300">GHOST BEST LAP: {formatTime(hud.bestLapTime)}</span>
+                )}
               </div>
             )}
           </div>
@@ -231,9 +247,52 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="w-fit rounded-lg border border-slate-800/80 bg-slate-950/82 px-3 py-1 text-[11px] font-bold tracking-widest text-amber-300 uppercase">
-                {hud.sectorName}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="w-fit rounded-lg border border-slate-800/80 bg-slate-950/82 px-3 py-1 text-[11px] font-bold tracking-widest text-amber-300 uppercase">
+                  {hud.sectorName}
+                </div>
+                {hud.bestLapTime !== null && (
+                  <div className="w-fit rounded-lg border border-slate-800/80 bg-slate-950/82 px-3 py-1 text-[11px] font-bold tracking-wider text-sky-300 tabular-nums uppercase">
+                    BEST LAP {formatTime(hud.bestLapTime)}
+                    {hud.ghostEnabled ? ' · GHOST ON' : ' · GHOST OFF'}
+                  </div>
+                )}
               </div>
+
+              {hud.combo > 0 && (
+                <div className="w-fit rounded-xl border border-amber-500/50 bg-slate-950/90 px-3.5 py-2 shadow-lg tabular-nums">
+                  <div className="flex items-baseline gap-2.5">
+                    <span
+                      className={`text-2xl leading-none font-black tracking-tight ${
+                        hud.comboMultiplier >= 5
+                          ? 'text-orange-400'
+                          : hud.comboMultiplier >= 3
+                            ? 'text-amber-300'
+                            : 'text-sky-300'
+                      }`}
+                    >
+                      {hud.comboMultiplier}x
+                    </span>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-extrabold tracking-wider text-amber-300 uppercase">
+                        {hud.comboEventLabel || 'COMBO CHAIN'}
+                      </span>
+                      <span className="text-[10px] font-semibold text-slate-400">
+                        {hud.combo} STUNT{hud.combo === 1 ? '' : 'S'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-1.5 h-1.5 w-36 overflow-hidden rounded-full bg-slate-800">
+                    <div
+                      className="h-full transition-all duration-75"
+                      style={{
+                        width: `${Math.round(hud.comboTimerRatio * 100)}%`,
+                        backgroundColor: hud.comboMultiplier >= 5 ? '#f97316' : '#f59e0b',
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Top-Right: Timer, Current Lap, Orbs, Utility Buttons & Transparent 2D Mini-Map */}
@@ -266,9 +325,33 @@ export default function App() {
                       {hud.orbsCollected}/{hud.totalOrbs}
                     </span>
                   </div>
+                  <div className="h-6 w-px bg-slate-800" />
+                  <div className="flex flex-col items-end">
+                    <span className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
+                      Score
+                    </span>
+                    <span className="text-base font-extrabold text-sky-300">
+                      {hud.score.toLocaleString()}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="pointer-events-auto flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => engineRef.current?.toggleGhost()}
+                    title="Toggle Ghost Replay (G)"
+                    aria-label={hud.ghostEnabled ? 'Hide ghost replay' : 'Show ghost replay'}
+                    className={`flex h-10 w-10 items-center justify-center rounded-xl border bg-slate-950/88 transition-colors ${
+                      hud.ghostEnabled && hud.ghostAvailable
+                        ? 'border-sky-400/80 text-sky-300 hover:border-sky-300'
+                        : hud.ghostEnabled
+                          ? 'border-slate-700/80 text-slate-200 hover:border-sky-400 hover:text-sky-300'
+                          : 'border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'
+                    }`}
+                  >
+                    <Ghost className="h-4 w-4" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => engineRef.current?.toggleCameraMode()}
@@ -317,7 +400,7 @@ export default function App() {
                 />
               </div>
               <span className="hidden text-[11px] font-semibold text-slate-400 sm:inline">
-                R Respawn &nbsp;·&nbsp; C Cam ({hud.cameraMode === 'chase' ? 'Manual' : 'Auto'}) &nbsp;·&nbsp; Esc Pause
+                R Respawn &nbsp;·&nbsp; G Ghost &nbsp;·&nbsp; C Cam ({hud.cameraMode === 'chase' ? 'Manual' : 'Auto'}) &nbsp;·&nbsp; Esc Pause
               </span>
             </div>
             <Speedometer speed={hud.speed} />
@@ -346,7 +429,7 @@ export default function App() {
                 </h2>
               </div>
 
-              <div className="mb-6 grid grid-cols-4 gap-2 rounded-xl border border-slate-800 bg-slate-900/90 p-3.5 text-center tabular-nums">
+              <div className="mb-4 grid grid-cols-4 gap-2 rounded-xl border border-slate-800 bg-slate-900/90 p-3.5 text-center tabular-nums">
                 <div>
                   <div className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
                     Time
@@ -365,25 +448,28 @@ export default function App() {
                 </div>
                 <div>
                   <div className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
-                    Circuits
+                    Score
                   </div>
                   <div className="mt-0.5 text-base font-bold text-sky-400">
-                    {hud.circuitsCompleted}
+                    {hud.score.toLocaleString()}
                   </div>
                 </div>
                 <div>
                   <div className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
-                    Cores
+                    Max Combo
                   </div>
                   <div className="mt-0.5 text-base font-bold text-amber-400">
-                    {hud.orbsCollected}/{hud.totalOrbs}
+                    {hud.bestCombo > 0 ? `${Math.min(10, hud.bestCombo)}x` : '—'}
                   </div>
                 </div>
               </div>
 
-              {hud.bestTime !== null && (
-                <div className="mb-5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-center text-xs font-bold tracking-wide text-amber-300 tabular-nums">
-                  PERSONAL BEST: {formatTime(hud.bestTime)}
+              {(hud.bestTime !== null || hud.bestLapTime !== null) && (
+                <div className="mb-5 flex flex-col gap-1 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-center text-xs font-bold tracking-wide text-amber-300 tabular-nums">
+                  {hud.bestTime !== null && <div>PERSONAL BEST CIRCUIT: {formatTime(hud.bestTime)}</div>}
+                  {hud.bestLapTime !== null && (
+                    <div className="text-sky-300">BEST LAP (GHOST): {formatTime(hud.bestLapTime)}</div>
+                  )}
                 </div>
               )}
 

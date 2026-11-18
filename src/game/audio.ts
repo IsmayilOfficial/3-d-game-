@@ -206,6 +206,28 @@ export class GameAudio {
     osc.stop(now + 0.19);
   }
 
+  public playNearMiss(combo: number): void {
+    const ctx = this.ensureContext();
+    if (!ctx || !this.masterGain) return;
+    const now = ctx.currentTime;
+    const semitone = Math.min(14, combo);
+    const baseFreq = 440 * Math.pow(2, semitone / 12);
+    [baseFreq, baseFreq * 1.25].forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = idx === 0 ? 'triangle' : 'sine';
+      const t = now + idx * 0.04;
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.exponentialRampToValueAtTime(freq * 1.18, t + 0.08);
+      gain.gain.setValueAtTime(0.16, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+      osc.connect(gain);
+      gain.connect(this.masterGain!);
+      osc.start(t);
+      osc.stop(t + 0.15);
+    });
+  }
+
   public playCheckpoint(): void {
     const ctx = this.ensureContext();
     if (!ctx || !this.masterGain) return;

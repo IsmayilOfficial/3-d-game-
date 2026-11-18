@@ -26,10 +26,29 @@ export interface MinimapState {
   checkpoints: MinimapCheckpoint[];
 }
 
+export interface GhostFrame {
+  t: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+  roll: number;
+  steer: number;
+  wheelSpin: number;
+}
+
+export interface BestLapGhostData {
+  lapTime: number;
+  frames: GhostFrame[];
+}
+
 export interface HudSnapshot {
   phase: GamePhase;
   elapsedTime: number;
   bestTime: number | null;
+  bestLapTime: number | null;
+  currentLapTime: number;
   speed: number;
   currentLap: number;
   totalLaps: number;
@@ -41,10 +60,17 @@ export interface HudSnapshot {
   health: number;
   maxHealth: number;
   dashCooldownRatio: number; // 0 = ready, 1 = cooling down
+  score: number;
   combo: number;
+  comboMultiplier: number;
+  comboTimerRatio: number;
+  comboEventLabel: string;
+  bestCombo: number;
   sectorName: string;
   muted: boolean;
   cameraMode: 'chase' | 'dynamic';
+  ghostAvailable: boolean;
+  ghostEnabled: boolean;
   minimap: MinimapState;
 }
 

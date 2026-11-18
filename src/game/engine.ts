@@ -2,10 +2,10 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { GameAudio } from './audio';
 import { buildLevel, BuiltLevel } from './level';
-import { createPlayerModel, PlayerRig } from './models';
+import { createGhostCarModel, createPlayerModel, GhostRig, PlayerRig } from './models';
 import { CharacterController, CharacterInput, groundHeightAt } from './physics';
 import { createProceduralTextures, ProceduralTextureSet } from './textures';
-import { GamePhase, HudSnapshot, MinimapTrackRect } from './types';
+import { BestLapGhostData, GamePhase, GhostFrame, HudSnapshot, MinimapTrackRect } from './types';
 
 // Pre-allocated math helpers (zero GC in render loop)
 const _vec3A = new THREE.Vector3();
@@ -38,6 +38,7 @@ export class StriderGameEngine {
   private textures: ProceduralTextureSet;
   private level: BuiltLevel;
   private playerRig: PlayerRig;
+  private ghostRig: GhostRig;
   private controller: CharacterController;
   public audio: GameAudio;
 
@@ -61,6 +62,12 @@ export class StriderGameEngine {
   private hitstopTimer = 0;
   private combo = 0;
   private comboTimer = 0;
+  private readonly comboDuration = 4.5;
+  private score = 0;
+  private bestCombo = 0;
+  private comboEventLabel = '';
+  private nearMissCooldowns = new Map<string, number>();
+  private lastCollisionHitFrame = false;
   private currentLap = 1;
   private readonly totalLaps = 3;
   private circuitsCompleted = 0;
@@ -68,6 +75,14 @@ export class StriderGameEngine {
   private orbsCollected = 0;
   private currentSector = 'SECTOR 1 · START PLAZA';
   private cameraMode: 'chase' | 'dynamic' = 'dynamic';
+
+  // Ghost Replay state (best lap recording & playback)
+  private lapElapsedTime = 0;
+  private currentLapFrames: GhostFrame[] = [];
+  private ghostRecordTimer = 0;
+  private bestLapGhost: BestLapGhostData | null = null;
+  private ghostCursor = 0;
+  private ghostEnabled = true;
 
   // Animation & camera juice
   private squashY = 1;
@@ -105,6 +120,7 @@ export class StriderGameEngine {
         const parsed = parseInt(savedCircuits, 10);
         if (!Number.isNaN(parsed) && parsed >= 0) this.circuitsCompleted = parsed;
       }
+      this.bestLapGhost = this.loadBestLapGhost();
     } catch {
       // Ignore storage errors
     }
@@ -218,6 +234,9 @@ export class StriderGameEngine {
     this.playerRig = createPlayerModel(this.textures.contactShadowMap);
     this.scene.add(this.playerRig.root);
 
+    this.ghostRig = createGhostCarModel(this.textures.contactShadowMap);
+    this.scene.add(this.ghostRig.root);
+
     this.controller = new CharacterController();
     this.resetRunState();
 
@@ -307,6 +326,8 @@ export class StriderGameEngine {
         this.respawnAtCheckpoint();
       } else if (e.code === 'KeyC' && this.phase === 'playing') {
         this.toggleCameraMode();
+      } else if (e.code === 'KeyG' && this.phase === 'playing') {
+        this.toggleGhost();
       }
     }
   };
@@ -397,6 +418,14 @@ export class StriderGameEngine {
     this.emitHud();
   }
 
+  public toggleGhost(): void {
+    this.ghostEnabled = !this.ghostEnabled;
+    if (!this.ghostEnabled) {
+      this.ghostRig.root.visible = false;
+    }
+    this.emitHud();
+  }
+
   public respawnAtCheckpoint(): void {
     const cpIdx = Math.max(0, this.checkpointIndex - 1);
     const spawnPos =
@@ -410,7 +439,11 @@ export class StriderGameEngine {
 
     this.controller.reset(spawnPos, Math.PI);
     this.cameraYaw = 0;
+    this.combo = 0;
+    this.comboTimer = 0;
+    this.comboEventLabel = '';
     this.spawnBurst(spawnPos, 0x38bdf8, 14, 6);
+    this.emitHud();
   }
 
   private resetRunState(): void {
@@ -420,6 +453,11 @@ export class StriderGameEngine {
     this.hitstopTimer = 0;
     this.combo = 0;
     this.comboTimer = 0;
+    this.score = 0;
+    this.bestCombo = 0;
+    this.comboEventLabel = '';
+    this.nearMissCooldowns.clear();
+    this.lastCollisionHitFrame = false;
     this.currentLap = 1;
     this.checkpointIndex = 0;
     this.orbsCollected = 0;
@@ -432,6 +470,7 @@ export class StriderGameEngine {
     this.controller.reset(new THREE.Vector3(0, 0.25, 12), Math.PI);
     this.playerRig.root.position.copy(this.controller.position);
     this.playerRig.root.rotation.y = this.controller.yaw;
+    this.resetLapGhostState();
 
     // Reset checkpoints
     this.level.checkpoints.forEach((cp, idx) => {
@@ -611,6 +650,10 @@ export class StriderGameEngine {
         this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.32);
         this.audio.playBoostPad();
         this.spawnBurst(pos, 0x38bdf8, 16, 9);
+        if (this.combo > 0) {
+          this.comboTimer = this.comboDuration;
+          this.score += 100 * this.getComboMultiplier();
+        }
       }
     }
 
@@ -626,8 +669,7 @@ export class StriderGameEngine {
         orb.collected = true;
         orb.mesh.visible = false;
         this.orbsCollected++;
-        this.combo++;
-        this.comboTimer = 4.0;
+        this.awardCombo(120, 'ENERGY CORE', 0xfbbf24, false);
         this.audio.playOrbPickup(this.combo);
         this.spawnBurst(orb.position, 0xfbbf24, 12, 6.5);
       }
@@ -649,6 +691,7 @@ export class StriderGameEngine {
         mat.emissive.setHex(0x16a34a);
 
         if (i === this.level.checkpoints.length - 1) {
+          this.finalizeLapGhost();
           this.circuitsCompleted++;
           try {
             localStorage.setItem('apex_strider_circuits_completed', String(this.circuitsCompleted));
@@ -661,6 +704,7 @@ export class StriderGameEngine {
           } else {
             // Final lap complete -> Victory!
             this.phase = 'victory';
+            this.ghostRig.root.visible = false;
             if (this.bestTime === null || this.elapsedTime < this.bestTime) {
               this.bestTime = this.elapsedTime;
               try {
@@ -720,11 +764,14 @@ export class StriderGameEngine {
         }
 
         if (hit) {
+          this.lastCollisionHitFrame = true;
           hz.hitCooldown = 0.6;
           this.health = Math.max(0, this.health - 1);
           this.invulnTimer = 1.1;
           this.hitstopTimer = 0.055; // 55ms crisp hitstop
           this.combo = 0;
+          this.comboTimer = 0;
+          this.comboEventLabel = '';
           this.shakeTrauma = 0.85;
           this.controller.velocity.x = _vec3A.x * 14;
           this.controller.velocity.z = _vec3A.z * 14;
@@ -742,10 +789,133 @@ export class StriderGameEngine {
       }
     }
 
+    // 4b. Near-Miss Obstacle Detection (Hazards, Track Pillars, Crates)
+    this.updateNearMissChecks(dt, pos);
+
     // 5. Out-of-bounds canyon fall recovery
     const terrainFloor = groundHeightAt(pos.x, pos.z);
     if (pos.y <= terrainFloor + 0.35 && pos.z < -6) {
       this.respawnAtCheckpoint();
+    }
+  }
+
+  private getComboMultiplier(): number {
+    return this.combo <= 0 ? 1 : Math.min(10, this.combo);
+  }
+
+  private awardCombo(
+    basePoints: number,
+    label: string,
+    burstColor: number,
+    playNearMissChime: boolean,
+  ): void {
+    this.combo++;
+    if (this.combo > this.bestCombo) {
+      this.bestCombo = this.combo;
+    }
+    this.comboTimer = this.comboDuration;
+    this.comboEventLabel = label;
+    this.score += basePoints * this.getComboMultiplier();
+    if (playNearMissChime) {
+      this.audio.playNearMiss(this.combo);
+      this.spawnBurst(this.controller.position, burstColor, 10, 6.2);
+    }
+    this.emitHud();
+  }
+
+  private updateNearMissChecks(dt: number, pos: THREE.Vector3): void {
+    this.nearMissCooldowns.forEach((remaining, key) => {
+      const next = remaining - dt;
+      if (next <= 0) this.nearMissCooldowns.delete(key);
+      else this.nearMissCooldowns.set(key, next);
+    });
+
+    const horizSpeed = Math.hypot(this.controller.velocity.x, this.controller.velocity.z);
+    if (this.lastCollisionHitFrame || this.invulnTimer > 0 || horizSpeed < 5.8) {
+      return;
+    }
+
+    // Check moving hazards (Sentinel Drones & Rotating Sweepers)
+    for (let i = 0; i < this.level.hazards.length; i++) {
+      const hz = this.level.hazards[i];
+      if (hz.hitCooldown > 0 || this.nearMissCooldowns.has(hz.id)) continue;
+
+      if (hz.type === 'drone') {
+        const dx = pos.x - hz.position.x;
+        const dz = pos.z - hz.position.z;
+        const dy = pos.y + 0.8 - (hz.position.y + 1.0);
+        const dSq = dx * dx + dz * dz + dy * dy;
+        const hitR = hz.radius + this.controller.radius;
+        const nearR = hitR + 1.85;
+        if (dSq >= hitR * hitR && dSq <= nearR * nearR) {
+          this.nearMissCooldowns.set(hz.id, 2.2);
+          this.awardCombo(250, 'DRONE NEAR MISS', 0x38bdf8, true);
+          return;
+        }
+      } else {
+        const angle = hz.mesh.rotation.y;
+        const dirX = Math.cos(angle);
+        const dirZ = -Math.sin(angle);
+        const relX = pos.x - hz.position.x;
+        const relZ = pos.z - hz.position.z;
+        const proj = THREE.MathUtils.clamp(relX * dirX + relZ * dirZ, -hz.patrolRange, hz.patrolRange);
+        const closestX = hz.position.x + dirX * proj;
+        const closestZ = hz.position.z + dirZ * proj;
+        const distX = pos.x - closestX;
+        const distZ = pos.z - closestZ;
+        const dy = pos.y - hz.position.y;
+        const dSq = distX * distX + distZ * distZ;
+        const hitR = 0.45 + this.controller.radius;
+        const nearR = hitR + 1.65;
+        if (dy > -0.6 && dy < 2.2 && dSq >= hitR * hitR && dSq <= nearR * nearR) {
+          this.nearMissCooldowns.set(hz.id, 2.2);
+          this.awardCombo(300, 'SWEEPER NEAR MISS', 0xfbbf24, true);
+          return;
+        }
+      }
+    }
+
+    if (horizSpeed < 8.0) return;
+
+    // Check track pillars
+    for (let i = 0; i < this.level.staticColliders.length; i++) {
+      const col = this.level.staticColliders[i];
+      if (col.tag !== 'pillar' || this.nearMissCooldowns.has(col.id)) continue;
+      if (pos.y + this.controller.height < col.minY - 0.3 || pos.y > col.maxY + 0.5) continue;
+
+      const closestX = THREE.MathUtils.clamp(pos.x, col.minX, col.maxX);
+      const closestZ = THREE.MathUtils.clamp(pos.z, col.minZ, col.maxZ);
+      const dx = pos.x - closestX;
+      const dz = pos.z - closestZ;
+      const dSq = dx * dx + dz * dz;
+      const minR = this.controller.radius + 0.05;
+      const nearR = this.controller.radius + 1.35;
+      if (dSq >= minR * minR && dSq <= nearR * nearR) {
+        this.nearMissCooldowns.set(col.id, 2.4);
+        this.awardCombo(200, 'PILLAR NEAR MISS', 0x38bdf8, true);
+        return;
+      }
+    }
+
+    // Check pushable crates
+    for (let i = 0; i < this.level.crates.length; i++) {
+      const crate = this.level.crates[i];
+      const col = crate.collider;
+      if (this.nearMissCooldowns.has(crate.id)) continue;
+      if (pos.y + this.controller.height < col.minY - 0.2 || pos.y > col.maxY + 0.6) continue;
+
+      const closestX = THREE.MathUtils.clamp(pos.x, col.minX, col.maxX);
+      const closestZ = THREE.MathUtils.clamp(pos.z, col.minZ, col.maxZ);
+      const dx = pos.x - closestX;
+      const dz = pos.z - closestZ;
+      const dSq = dx * dx + dz * dz;
+      const minR = this.controller.radius + 0.08;
+      const nearR = this.controller.radius + 1.25;
+      if (dSq >= minR * minR && dSq <= nearR * nearR) {
+        this.nearMissCooldowns.set(crate.id, 2.4);
+        this.awardCombo(180, 'CRATE NEAR MISS', 0x38bdf8, true);
+        return;
+      }
     }
   }
 
@@ -782,9 +952,167 @@ export class StriderGameEngine {
     this.controller.reset(spawnPos, Math.PI);
     this.cameraYaw = 0;
     this.boostFovTimer = 0.45;
+    this.resetLapGhostState();
     this.audio.playCheckpoint();
     this.spawnBurst(spawnPos, 0xfbbf24, 24, 9);
     this.emitHud();
+  }
+
+  private loadBestLapGhost(): BestLapGhostData | null {
+    try {
+      const raw = localStorage.getItem('apex_strider_best_lap_ghost');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { lapTime?: unknown; frames?: unknown };
+      if (
+        typeof parsed.lapTime !== 'number' ||
+        !Number.isFinite(parsed.lapTime) ||
+        parsed.lapTime <= 0 ||
+        !Array.isArray(parsed.frames) ||
+        parsed.frames.length < 2
+      ) {
+        return null;
+      }
+      const frames: GhostFrame[] = [];
+      for (let i = 0; i < parsed.frames.length; i++) {
+        const tuple = parsed.frames[i];
+        if (!Array.isArray(tuple) || tuple.length < 9) continue;
+        frames.push({
+          t: Number(tuple[0]) || 0,
+          x: Number(tuple[1]) || 0,
+          y: Number(tuple[2]) || 0,
+          z: Number(tuple[3]) || 0,
+          yaw: Number(tuple[4]) || 0,
+          pitch: Number(tuple[5]) || 0,
+          roll: Number(tuple[6]) || 0,
+          steer: Number(tuple[7]) || 0,
+          wheelSpin: Number(tuple[8]) || 0,
+        });
+      }
+      return frames.length >= 2 ? { lapTime: parsed.lapTime, frames } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private saveBestLapGhost(data: BestLapGhostData): void {
+    try {
+      const round3 = (n: number) => Math.round(n * 1000) / 1000;
+      const compact = {
+        lapTime: round3(data.lapTime),
+        frames: data.frames.map((f) => [
+          round3(f.t),
+          round3(f.x),
+          round3(f.y),
+          round3(f.z),
+          round3(f.yaw),
+          round3(f.pitch),
+          round3(f.roll),
+          round3(f.steer),
+          round3(f.wheelSpin),
+        ]),
+      };
+      localStorage.setItem('apex_strider_best_lap_ghost', JSON.stringify(compact));
+    } catch {
+      // Ignore storage quota or serialization errors
+    }
+  }
+
+  private resetLapGhostState(): void {
+    this.lapElapsedTime = 0;
+    this.currentLapFrames = [];
+    this.ghostRecordTimer = 0;
+    this.ghostCursor = 0;
+    this.recordGhostSample(true);
+  }
+
+  private recordGhostSample(force = false): void {
+    if (!force && this.ghostRecordTimer < 0.05) return;
+    if (this.currentLapFrames.length >= 6000) return;
+    this.ghostRecordTimer = 0;
+    this.currentLapFrames.push({
+      t: this.lapElapsedTime,
+      x: this.controller.position.x,
+      y: this.controller.position.y,
+      z: this.controller.position.z,
+      yaw: this.controller.yaw,
+      pitch: this.playerRig.bodyPivot.rotation.x,
+      roll: this.playerRig.bodyPivot.rotation.z,
+      steer: this.playerRig.steerFL.rotation.y,
+      wheelSpin: this.playerRig.wheelFL.rotation.x,
+    });
+  }
+
+  private finalizeLapGhost(): void {
+    this.recordGhostSample(true);
+    if (
+      this.currentLapFrames.length >= 2 &&
+      (this.bestLapGhost === null || this.lapElapsedTime < this.bestLapGhost.lapTime)
+    ) {
+      this.bestLapGhost = {
+        lapTime: this.lapElapsedTime,
+        frames: this.currentLapFrames.slice(),
+      };
+      this.saveBestLapGhost(this.bestLapGhost);
+    }
+  }
+
+  private updateGhostPlayback(): void {
+    if (
+      this.phase !== 'playing' ||
+      !this.ghostEnabled ||
+      !this.bestLapGhost ||
+      this.bestLapGhost.frames.length < 2
+    ) {
+      this.ghostRig.root.visible = false;
+      return;
+    }
+
+    const frames = this.bestLapGhost.frames;
+    const t = this.lapElapsedTime;
+    const lastFrame = frames[frames.length - 1];
+
+    if (t > lastFrame.t + 0.35) {
+      this.ghostRig.root.visible = false;
+      return;
+    }
+
+    if (this.ghostCursor >= frames.length - 1 || t < frames[this.ghostCursor].t) {
+      this.ghostCursor = 0;
+    }
+    while (this.ghostCursor < frames.length - 2 && frames[this.ghostCursor + 1].t <= t) {
+      this.ghostCursor++;
+    }
+
+    const f0 = frames[this.ghostCursor];
+    const f1 = frames[Math.min(this.ghostCursor + 1, frames.length - 1)];
+    const span = Math.max(1e-5, f1.t - f0.t);
+    const alpha = THREE.MathUtils.clamp((t - f0.t) / span, 0, 1);
+
+    const gx = THREE.MathUtils.lerp(f0.x, f1.x, alpha);
+    const gy = THREE.MathUtils.lerp(f0.y, f1.y, alpha);
+    const gz = THREE.MathUtils.lerp(f0.z, f1.z, alpha);
+
+    let yawDiff = f1.yaw - f0.yaw;
+    while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+    while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
+    const gyaw = f0.yaw + yawDiff * alpha;
+
+    const gpitch = THREE.MathUtils.lerp(f0.pitch, f1.pitch, alpha);
+    const groll = THREE.MathUtils.lerp(f0.roll, f1.roll, alpha);
+    const gsteer = THREE.MathUtils.lerp(f0.steer, f1.steer, alpha);
+    const gspin = THREE.MathUtils.lerp(f0.wheelSpin, f1.wheelSpin, alpha);
+
+    this.ghostRig.root.visible = true;
+    this.ghostRig.root.position.set(gx, gy, gz);
+    this.ghostRig.root.rotation.y = gyaw;
+    this.ghostRig.bodyPivot.rotation.x = gpitch;
+    this.ghostRig.bodyPivot.rotation.z = groll;
+    this.ghostRig.steerFL.rotation.y = gsteer;
+    this.ghostRig.steerFR.rotation.y = gsteer;
+    this.ghostRig.wheelFL.rotation.x = gspin;
+    this.ghostRig.wheelFR.rotation.x = gspin;
+    this.ghostRig.wheelRL.rotation.x = gspin;
+    this.ghostRig.wheelRR.rotation.x = gspin;
   }
 
   private updatePlayerVisuals(dt: number): void {
@@ -987,6 +1315,8 @@ export class StriderGameEngine {
       phase: this.phase,
       elapsedTime: this.elapsedTime,
       bestTime: this.bestTime,
+      bestLapTime: this.bestLapGhost ? this.bestLapGhost.lapTime : null,
+      currentLapTime: this.lapElapsedTime,
       speed: Math.round(speed * 3.6), // km/h feel
       currentLap: this.currentLap,
       totalLaps: this.totalLaps,
@@ -998,10 +1328,17 @@ export class StriderGameEngine {
       health: this.health,
       maxHealth: this.maxHealth,
       dashCooldownRatio: this.controller.dashCooldown / this.controller.dashCooldownMax,
+      score: this.score,
       combo: this.combo,
+      comboMultiplier: this.getComboMultiplier(),
+      comboTimerRatio: this.combo > 0 ? Math.max(0, Math.min(1, this.comboTimer / this.comboDuration)) : 0,
+      comboEventLabel: this.comboEventLabel,
+      bestCombo: this.bestCombo,
       sectorName: this.currentSector,
       muted: this.audio.isMuted(),
       cameraMode: this.cameraMode,
+      ghostAvailable: this.bestLapGhost !== null,
+      ghostEnabled: this.ghostEnabled,
       minimap: {
         playerX: this.controller.position.x,
         playerZ: this.controller.position.z,
@@ -1041,12 +1378,20 @@ export class StriderGameEngine {
         this.hitstopTimer = Math.max(0, this.hitstopTimer - dt);
       } else {
         this.elapsedTime += dt;
+        this.lapElapsedTime += dt;
+        this.ghostRecordTimer += dt;
         if (this.invulnTimer > 0) this.invulnTimer = Math.max(0, this.invulnTimer - dt);
         if (this.boostFovTimer > 0) this.boostFovTimer = Math.max(0, this.boostFovTimer - dt);
         if (this.comboTimer > 0) {
           this.comboTimer -= dt;
-          if (this.comboTimer <= 0) this.combo = 0;
+          if (this.comboTimer <= 0) {
+            this.combo = 0;
+            this.comboTimer = 0;
+            this.comboEventLabel = '';
+            this.emitHud();
+          }
         }
+        this.lastCollisionHitFrame = false;
 
         this.updateMovingWorld(dt, totalTime);
 
@@ -1080,12 +1425,20 @@ export class StriderGameEngine {
           this.level.crates,
         );
 
-        // Weight-scaled feedback
+        const horizSpeed = Math.hypot(this.controller.velocity.x, this.controller.velocity.z);
+
+        // Weight-scaled feedback & Jump Combo Rewards
         if (events.jumped || events.doubleJumped) {
           this.squashY = 1.24;
           this.squashXZ = 0.86;
           this.audio.playJump(events.doubleJumped);
           this.spawnBurst(this.controller.position, events.doubleJumped ? 0x38bdf8 : 0xe2e8f0, 8, 4.5);
+
+          if (events.doubleJumped) {
+            this.awardCombo(150, 'DOUBLE JUMP', 0x38bdf8, false);
+          } else if (horizSpeed > 3.2 || this.combo > 0) {
+            this.awardCombo(100, this.combo > 0 ? 'CONSECUTIVE JUMP' : 'AIR JUMP', 0x38bdf8, false);
+          }
         }
         if (events.landedImpactSpeed > 0) {
           const weight = Math.min(1, events.landedImpactSpeed / 22);
@@ -1094,6 +1447,9 @@ export class StriderGameEngine {
           this.shakeTrauma = Math.min(1, this.shakeTrauma + weight * 0.28);
           this.audio.playLand(events.landedImpactSpeed);
           this.spawnBurst(this.controller.position, 0xd6d3d1, Math.round(6 + weight * 8), 4.8);
+          if (events.landedImpactSpeed > 5.0 && this.combo > 0) {
+            this.comboTimer = Math.max(this.comboTimer, this.comboDuration * 0.75);
+          }
         }
         if (events.dashed) {
           this.squashY = 0.88;
@@ -1109,11 +1465,12 @@ export class StriderGameEngine {
           this.spawnBurst(_vec3B, 0xf97316, 7, 5.5);
         }
 
-        const horizSpeed = Math.hypot(this.controller.velocity.x, this.controller.velocity.z);
         this.audio.updateFootsteps(dt, horizSpeed, this.controller.grounded);
 
         this.updateGameplayInteractions(dt);
         this.updatePlayerVisuals(dt);
+        this.recordGhostSample(false);
+        this.updateGhostPlayback();
         this.updateParticles(dt);
 
         this.hudEmitTimer += dt;
@@ -1123,6 +1480,7 @@ export class StriderGameEngine {
         }
       }
     } else if (this.phase === 'title') {
+      this.ghostRig.root.visible = false;
       this.updateMovingWorld(dt, totalTime);
       this.updatePlayerVisuals(dt);
     }
@@ -1188,6 +1546,7 @@ export class StriderGameEngine {
     window.removeEventListener('pointerup', this.handlePointerUp);
 
     this.level.dispose();
+    this.ghostRig.dispose();
     this.textures.dispose();
     this.envTex.dispose();
     this.particlesMesh.geometry.dispose();

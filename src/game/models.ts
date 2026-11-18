@@ -16,6 +16,18 @@ export interface PlayerRig {
   contactShadow: THREE.Mesh;
 }
 
+export interface GhostRig {
+  root: THREE.Group;
+  bodyPivot: THREE.Group;
+  steerFL: THREE.Group;
+  steerFR: THREE.Group;
+  wheelFL: THREE.Group;
+  wheelFR: THREE.Group;
+  wheelRL: THREE.Group;
+  wheelRR: THREE.Group;
+  dispose: () => void;
+}
+
 /**
  * Realistic composite procedural 3D GT Supercar pivoted at bottom-center (0, 0, 0).
  * Front bumper faces +Z, rear diffuser/spoiler/exhausts face -Z.
@@ -374,6 +386,110 @@ export function createPlayerModel(contactShadowMap: THREE.Texture): PlayerRig {
     headlightMat,
     taillightMat,
     contactShadow,
+  };
+}
+
+/**
+ * Translucent holographic GT Supercar rig used for Ghost Replay playback.
+ * Uses depthWrite: false and elevated renderOrder so it blends cleanly over track surfaces.
+ */
+export function createGhostCarModel(contactShadowMap: THREE.Texture): GhostRig {
+  const baseRig = createPlayerModel(contactShadowMap);
+  baseRig.root.visible = false;
+
+  // Hide exhaust flame cones on the ghost rig
+  baseRig.thrusterFlameL.visible = false;
+  baseRig.thrusterFlameR.visible = false;
+
+  const ghostShellMat = new THREE.MeshStandardMaterial({
+    color: 0x38bdf8,
+    emissive: 0x0284c7,
+    emissiveIntensity: 0.9,
+    roughness: 0.2,
+    metalness: 0.25,
+    transparent: true,
+    opacity: 0.34,
+    depthWrite: false,
+  });
+
+  const ghostDarkMat = new THREE.MeshStandardMaterial({
+    color: 0x0ea5e9,
+    emissive: 0x0369a1,
+    emissiveIntensity: 0.45,
+    roughness: 0.4,
+    metalness: 0.15,
+    transparent: true,
+    opacity: 0.2,
+    depthWrite: false,
+  });
+
+  const ghostGlowMat = new THREE.MeshBasicMaterial({
+    color: 0x7dd3fc,
+    transparent: true,
+    opacity: 0.65,
+    depthWrite: false,
+  });
+
+  const ghostShadowMat = new THREE.MeshBasicMaterial({
+    map: contactShadowMap,
+    color: 0x38bdf8,
+    transparent: true,
+    opacity: 0.24,
+    depthWrite: false,
+  });
+
+  const originalMaterials = new Set<THREE.Material>();
+  const geometries = new Set<THREE.BufferGeometry>();
+
+  baseRig.root.traverse((obj) => {
+    if (obj instanceof THREE.Mesh) {
+      obj.castShadow = false;
+      obj.receiveShadow = false;
+      obj.renderOrder = 6;
+      geometries.add(obj.geometry);
+
+      if (Array.isArray(obj.material)) {
+        obj.material.forEach((m) => originalMaterials.add(m));
+      } else if (obj.material) {
+        originalMaterials.add(obj.material);
+      }
+
+      if (obj === baseRig.contactShadow) {
+        obj.material = ghostShadowMat;
+      } else if (obj.material === baseRig.headlightMat || obj.material === baseRig.taillightMat) {
+        obj.material = ghostGlowMat;
+      } else if (
+        obj.parent === baseRig.wheelFL ||
+        obj.parent === baseRig.wheelFR ||
+        obj.parent === baseRig.wheelRL ||
+        obj.parent === baseRig.wheelRR
+      ) {
+        obj.material = ghostDarkMat;
+      } else {
+        obj.material = ghostShellMat;
+      }
+    }
+  });
+
+  // Dispose replaced opaque materials immediately so they don't leak
+  originalMaterials.forEach((m) => m.dispose());
+
+  return {
+    root: baseRig.root,
+    bodyPivot: baseRig.bodyPivot,
+    steerFL: baseRig.steerFL,
+    steerFR: baseRig.steerFR,
+    wheelFL: baseRig.wheelFL,
+    wheelFR: baseRig.wheelFR,
+    wheelRL: baseRig.wheelRL,
+    wheelRR: baseRig.wheelRR,
+    dispose: () => {
+      geometries.forEach((g) => g.dispose());
+      ghostShellMat.dispose();
+      ghostDarkMat.dispose();
+      ghostGlowMat.dispose();
+      ghostShadowMat.dispose();
+    },
   };
 }
 
