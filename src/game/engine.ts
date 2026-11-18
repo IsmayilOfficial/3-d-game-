@@ -5,7 +5,7 @@ import { buildLevel, BuiltLevel } from './level';
 import { createPlayerModel, PlayerRig } from './models';
 import { CharacterController, CharacterInput, groundHeightAt } from './physics';
 import { createProceduralTextures, ProceduralTextureSet } from './textures';
-import { GamePhase, HudSnapshot } from './types';
+import { GamePhase, HudSnapshot, MinimapTrackRect } from './types';
 
 // Pre-allocated math helpers (zero GC in render loop)
 const _vec3A = new THREE.Vector3();
@@ -43,6 +43,7 @@ export class StriderGameEngine {
 
   private particlesMesh: THREE.InstancedMesh;
   private particles: ParticleSlot[] = [];
+  private staticTrackRects: MinimapTrackRect[] = [];
 
   private isSoftwareGl: boolean;
   private frameId = 0;
@@ -186,6 +187,25 @@ export class StriderGameEngine {
     this.textures = createProceduralTextures(maxAniso);
     this.level = buildLevel(this.textures);
     this.scene.add(this.level.group);
+
+    this.staticTrackRects = [
+      ...this.level.staticColliders
+        .filter((c) => c.tag === 'ground')
+        .map((c) => ({
+          minX: c.minX,
+          maxX: c.maxX,
+          minZ: c.minZ,
+          maxZ: c.maxZ,
+          kind: 'deck' as const,
+        })),
+      ...this.level.ramps.map((r) => ({
+        minX: r.minX,
+        maxX: r.maxX,
+        minZ: r.minZ,
+        maxZ: r.maxZ,
+        kind: 'ramp' as const,
+      })),
+    ];
 
     this.playerRig = createPlayerModel(this.textures.contactShadowMap);
     this.scene.add(this.playerRig.root);
@@ -920,6 +940,28 @@ export class StriderGameEngine {
       sectorName: this.currentSector,
       muted: this.audio.isMuted(),
       cameraMode: this.cameraMode,
+      minimap: {
+        playerX: this.controller.position.x,
+        playerZ: this.controller.position.z,
+        playerYaw: this.controller.yaw,
+        trackRects: [
+          ...this.staticTrackRects,
+          ...this.level.movingPlatforms.map((mp) => ({
+            minX: mp.collider.minX,
+            maxX: mp.collider.maxX,
+            minZ: mp.collider.minZ,
+            maxZ: mp.collider.maxZ,
+            kind: 'moving' as const,
+          })),
+        ],
+        checkpoints: this.level.checkpoints.map((cp, idx) => ({
+          index: cp.index,
+          x: cp.position.x,
+          z: cp.position.z,
+          cleared: cp.cleared,
+          isFinish: idx === this.level.checkpoints.length - 1,
+        })),
+      },
     });
   }
 

@@ -2,6 +2,30 @@ import * as THREE from 'three';
 
 export type GamePhase = 'title' | 'playing' | 'paused' | 'victory' | 'gameover';
 
+export interface MinimapTrackRect {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  kind: 'deck' | 'ramp' | 'moving';
+}
+
+export interface MinimapCheckpoint {
+  index: number;
+  x: number;
+  z: number;
+  cleared: boolean;
+  isFinish: boolean;
+}
+
+export interface MinimapState {
+  playerX: number;
+  playerZ: number;
+  playerYaw: number;
+  trackRects: MinimapTrackRect[];
+  checkpoints: MinimapCheckpoint[];
+}
+
 export interface HudSnapshot {
   phase: GamePhase;
   elapsedTime: number;
@@ -18,6 +42,7 @@ export interface HudSnapshot {
   sectorName: string;
   muted: boolean;
   cameraMode: 'chase' | 'dynamic';
+  minimap: MinimapState;
 }
 
 export interface AabbCollider {

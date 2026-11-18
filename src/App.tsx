@@ -1,22 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Camera,
-  Check,
-  Code2,
-  Copy,
   Pause,
   Play,
   RotateCcw,
   Volume2,
   VolumeX,
-  X,
 } from 'lucide-react';
+import { Minimap } from './components/Minimap';
 import { StriderGameEngine } from './game/engine';
 import { HudSnapshot } from './game/types';
-import {
-  UNITY_CHARACTER_CONTROLLER_CS,
-  UNITY_COLLISION_HANDLER_CS,
-} from './game/unityScripts';
 
 const INITIAL_HUD: HudSnapshot = {
   phase: 'title',
@@ -34,6 +27,13 @@ const INITIAL_HUD: HudSnapshot = {
   sectorName: 'SECTOR 1 · START PLAZA',
   muted: false,
   cameraMode: 'dynamic',
+  minimap: {
+    playerX: 0,
+    playerZ: 12,
+    playerYaw: Math.PI,
+    trackRects: [],
+    checkpoints: [],
+  },
 };
 
 function formatTime(seconds: number): string {
@@ -50,9 +50,6 @@ export default function App() {
   const engineRef = useRef<StriderGameEngine | null>(null);
   const [hud, setHud] = useState<HudSnapshot>(INITIAL_HUD);
   const [initError, setInitError] = useState<string | null>(null);
-  const [showUnityModal, setShowUnityModal] = useState(false);
-  const [activeScriptTab, setActiveScriptTab] = useState<'controller' | 'collision'>('controller');
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     const container = mountRef.current;
@@ -76,20 +73,6 @@ export default function App() {
     }
   }, []);
 
-  const handleCopyScript = async () => {
-    const text =
-      activeScriptTab === 'controller'
-        ? UNITY_CHARACTER_CONTROLLER_CS
-        : UNITY_COLLISION_HANDLER_CS;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    } catch {
-      // Ignore clipboard failure
-    }
-  };
-
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-[#9dd5f3] font-sans text-slate-100 select-none">
       {/* Isolated WebGL Viewport Container */}
@@ -112,7 +95,7 @@ export default function App() {
       )}
 
       {/* TITLE SCREEN OVERLAY */}
-      {!initError && hud.phase === 'title' && !showUnityModal && (
+      {!initError && hud.phase === 'title' && (
         <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-6 sm:p-10">
           {/* Top-left minimal mute button */}
           <div className="flex items-center justify-between">
@@ -192,15 +175,6 @@ export default function App() {
                 <Play className="h-5 w-5 fill-slate-950" />
                 START RUN
               </button>
-
-              <button
-                type="button"
-                onClick={() => setShowUnityModal(true)}
-                className="flex items-center gap-2 rounded-xl border border-slate-700/90 bg-slate-950/90 px-4 py-3.5 text-sm font-semibold text-slate-200 transition-colors hover:border-sky-400 hover:text-sky-300"
-              >
-                <Code2 className="h-4 w-4 text-sky-400" />
-                Unity C# Physics Scripts
-              </button>
             </div>
 
             {hud.bestTime !== null && (
@@ -254,63 +228,67 @@ export default function App() {
               </div>
             </div>
 
-            {/* Top-Right: Timer, Orbs, Speed, Utility Buttons */}
-            <div className="flex items-start gap-2.5">
-              <div className="flex items-center gap-4 rounded-xl border border-slate-700/80 bg-slate-950/88 px-4 py-2 tabular-nums">
-                <div className="flex flex-col items-end">
-                  <span className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
-                    Time
-                  </span>
-                  <span className="text-base font-extrabold text-slate-100">
-                    {formatTime(hud.elapsedTime)}
-                  </span>
+            {/* Top-Right: Timer, Orbs, Speed, Utility Buttons & Transparent 2D Mini-Map */}
+            <div className="flex flex-col items-end gap-2">
+              <div className="flex items-start gap-2.5">
+                <div className="flex items-center gap-4 rounded-xl border border-slate-700/80 bg-slate-950/88 px-4 py-2 tabular-nums">
+                  <div className="flex flex-col items-end">
+                    <span className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
+                      Time
+                    </span>
+                    <span className="text-base font-extrabold text-slate-100">
+                      {formatTime(hud.elapsedTime)}
+                    </span>
+                  </div>
+                  <div className="h-6 w-px bg-slate-800" />
+                  <div className="flex flex-col items-end">
+                    <span className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
+                      Cores
+                    </span>
+                    <span className="text-base font-extrabold text-amber-400">
+                      {hud.orbsCollected}/{hud.totalOrbs}
+                    </span>
+                  </div>
+                  <div className="h-6 w-px bg-slate-800" />
+                  <div className="flex flex-col items-end">
+                    <span className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
+                      Speed
+                    </span>
+                    <span className="text-base font-extrabold text-sky-400">
+                      {hud.speed} <span className="text-[10px] font-semibold text-slate-400">KM/H</span>
+                    </span>
+                  </div>
                 </div>
-                <div className="h-6 w-px bg-slate-800" />
-                <div className="flex flex-col items-end">
-                  <span className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
-                    Cores
-                  </span>
-                  <span className="text-base font-extrabold text-amber-400">
-                    {hud.orbsCollected}/{hud.totalOrbs}
-                  </span>
-                </div>
-                <div className="h-6 w-px bg-slate-800" />
-                <div className="flex flex-col items-end">
-                  <span className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
-                    Speed
-                  </span>
-                  <span className="text-base font-extrabold text-sky-400">
-                    {hud.speed} <span className="text-[10px] font-semibold text-slate-400">KM/H</span>
-                  </span>
+
+                <div className="pointer-events-auto flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => engineRef.current?.toggleCameraMode()}
+                    title="Toggle Camera Mode (C)"
+                    className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/80 bg-slate-950/88 text-slate-200 transition-colors hover:border-sky-400 hover:text-sky-300"
+                  >
+                    <Camera className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => engineRef.current?.toggleMute()}
+                    aria-label={hud.muted ? 'Unmute audio' : 'Mute audio'}
+                    className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/80 bg-slate-950/88 text-slate-200 transition-colors hover:border-sky-400 hover:text-sky-300"
+                  >
+                    {hud.muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => engineRef.current?.pauseGame()}
+                    aria-label="Pause game"
+                    className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/80 bg-slate-950/88 text-slate-200 transition-colors hover:border-amber-400 hover:text-amber-300"
+                  >
+                    <Pause className="h-4 w-4" />
+                  </button>
                 </div>
               </div>
 
-              <div className="pointer-events-auto flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => engineRef.current?.toggleCameraMode()}
-                  title="Toggle Camera Mode (C)"
-                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/80 bg-slate-950/88 text-slate-200 transition-colors hover:border-sky-400 hover:text-sky-300"
-                >
-                  <Camera className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => engineRef.current?.toggleMute()}
-                  aria-label={hud.muted ? 'Unmute audio' : 'Mute audio'}
-                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/80 bg-slate-950/88 text-slate-200 transition-colors hover:border-sky-400 hover:text-sky-300"
-                >
-                  {hud.muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => engineRef.current?.pauseGame()}
-                  aria-label="Pause game"
-                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/80 bg-slate-950/88 text-slate-200 transition-colors hover:border-amber-400 hover:text-amber-300"
-                >
-                  <Pause className="h-4 w-4" />
-                </button>
-              </div>
+              <Minimap minimap={hud.minimap} />
             </div>
           </div>
 
@@ -338,8 +316,7 @@ export default function App() {
       )}
 
       {/* PAUSE / VICTORY / GAMEOVER MODAL */}
-      {(hud.phase === 'paused' || hud.phase === 'victory' || hud.phase === 'gameover') &&
-        !showUnityModal && (
+      {(hud.phase === 'paused' || hud.phase === 'victory' || hud.phase === 'gameover') && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-950/65 p-4">
             <div className="w-full max-w-md rounded-2xl border border-slate-700/90 bg-slate-950/96 p-7 shadow-2xl">
               <div className="mb-5">
@@ -416,87 +393,10 @@ export default function App() {
                   <RotateCcw className="h-4 w-4" />
                   {hud.phase === 'paused' ? 'RESTART CIRCUIT' : 'PLAY AGAIN'}
                 </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowUnityModal(true)}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900 py-2.5 text-xs font-semibold text-sky-300 hover:border-sky-400"
-                >
-                  <Code2 className="h-4 w-4" />
-                  Inspect Unity C# Character &amp; Collision Scripts
-                </button>
               </div>
             </div>
           </div>
         )}
-
-      {/* UNITY C# SCRIPTS INSPECTOR MODAL */}
-      {showUnityModal && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/78 p-4">
-          <div className="flex max-h-[86vh] w-full max-w-3xl flex-col rounded-2xl border border-slate-700 bg-slate-950 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
-              <div>
-                <h3 className="text-base font-bold text-white">
-                  Unity C# Character Movement &amp; Collision Reference
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Mirrors the swept capsule collision, slope, step-offset, coyote time, and moving-platform architecture running in this 3D scene.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowUnityModal(false)}
-                aria-label="Close modal"
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700 text-slate-300 hover:border-slate-500 hover:text-white"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="flex items-center justify-between border-b border-slate-800 px-5 py-2.5">
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveScriptTab('controller')}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                    activeScriptTab === 'controller'
-                      ? 'bg-sky-500 text-slate-950'
-                      : 'bg-slate-900 text-slate-300 hover:text-white'
-                  }`}
-                >
-                  PlayerCharacterController.cs
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveScriptTab('collision')}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                    activeScriptTab === 'collision'
-                      ? 'bg-sky-500 text-slate-950'
-                      : 'bg-slate-900 text-slate-300 hover:text-white'
-                  }`}
-                >
-                  EnvironmentCollisionHandler.cs
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleCopyScript}
-                className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-sky-400"
-              >
-                {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                {copied ? 'Copied' : 'Copy C#'}
-              </button>
-            </div>
-
-            <pre className="flex-1 overflow-auto p-5 font-mono text-xs leading-relaxed text-sky-100">
-              {activeScriptTab === 'controller'
-                ? UNITY_CHARACTER_CONTROLLER_CS
-                : UNITY_COLLISION_HANDLER_CS}
-            </pre>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
